@@ -1,149 +1,93 @@
 import streamlit as st
 import random
 import datetime
-import matplotlib.pyplot as plt
 
-# Инициализация на сесията
+# Настройки
 if 'bankroll' not in st.session_state:
-    st.session_state.bankroll = 500.0
+    st.session_state.bankroll = 500
 if 'bets_history' not in st.session_state:
     st.session_state.bets_history = []
 if 'todays_matches' not in st.session_state:
     st.session_state.todays_matches = [
-        {"id": 1, "match": "Барселона vs Хетафе", "odds": 1.55, "prediction": "1", "league": "Ла Лига", "date": str(datetime.date.today()), "selected": False, "marked": False},
-        {"id": 2, "match": "Верона vs Болоня", "odds": 2.10, "prediction": "2", "league": "Серия А", "date": str(datetime.date.today()), "selected": False, "marked": False},
-        {"id": 3, "match": "Брюж vs Андерлехт", "odds": 2.45, "prediction": "X", "league": "Белгийска Лига", "date": str(datetime.date.today()), "selected": False, "marked": False},
-        {"id": 4, "match": "Славия София vs Локомотив Пловдив", "odds": 2.00, "prediction": "1", "league": "България", "date": str(datetime.date.today()), "selected": False, "marked": False}
+        {"match": "Барселона vs Хетафе", "odds": 1.55, "prediction": "1", "selected": False},
+        {"match": "Верона vs Болоня", "odds": 2.10, "prediction": "2", "selected": False},
+        {"match": "Брюж vs Андерлехт", "odds": 2.45, "prediction": "X", "selected": False},
+        {"match": "Славия София vs Локомотив Пловдив", "odds": 1.95, "prediction": "1", "selected": False}
     ]
 
-st.title("🔮 Най-доброто приложение за залози")
+today = datetime.date.today()
 
-# Банка
-st.markdown(f"### 💰 Текуща банка: {st.session_state.bankroll:.2f} лв.")
-
-# Филтриране на мачове
-st.sidebar.header("Филтри")
-all_leagues = sorted(set(m['league'] for m in st.session_state.todays_matches))
-selected_league = st.sidebar.selectbox("Избери лига", ["Всички"] + all_leagues)
-min_odds = st.sidebar.slider("Минимален коефициент", 1.0, 5.0, 1.0, 0.05)
-show_marked = st.sidebar.checkbox("Покажи само маркирани мачове", False)
-
-# Филтриране по критерии
-filtered = st.session_state.todays_matches
-if selected_league != "Всички":
-    filtered = [m for m in filtered if m["league"] == selected_league]
-filtered = [m for m in filtered if m["odds"] >= min_odds]
-if show_marked:
-    filtered = [m for m in filtered if m["marked"]]
+st.title("Приложение за стойностни залози - Футбол")
+st.write(f"Текуща банка: {st.session_state.bankroll:.2f} лв.")
 
 st.subheader("Днешни мачове")
+for i, match in enumerate(st.session_state.todays_matches):
+    selected = st.checkbox(f"{match['match']} | Прогноза: {match['prediction']} | Коефициент: {match['odds']}", key=i)
+    st.session_state.todays_matches[i]['selected'] = selected
 
-for match in filtered:
-    cols = st.columns([3, 1, 1, 1, 1])
-    cols[0].write(f"**{match['match']}** ({match['league']}) - Прогноза: {match['prediction']} | Коефициент: {match['odds']}")
-    # Маркирай мач
-    marked = cols[1].checkbox("⭐", value=match["marked"], key=f"mark_{match['id']}")
-    match["marked"] = marked
+bet_amount = st.number_input("Въведи сума за залог на избран мач:", min_value=1, max_value=st.session_state.bankroll, value=50)
 
+def place_bet(match_index, amount):
+    match = st.session_state.todays_matches[match_index]
     if not match["selected"]:
-        amount = cols[2].number_input(f"Залог (лв.)", min_value=1, max_value=int(st.session_state.bankroll), value=50, key=f"bet_amount_{match['id']}")
-        prediction = cols[3].selectbox("Прогноза", options=["1", "X", "2"], index=["1", "X", "2"].index(match["prediction"]), key=f"pred_{match['id']}")
+        st.warning(f"Не си избрал мача: {match['match']}")
+        return
+    if match.get("bet_placed", False):
+        st.warning(f"Вече си заложил на мача: {match['match']}")
+        return
 
-        if cols[4].button("Заложи", key=f"bet_btn_{match['id']}"):
-            if amount > st.session_state.bankroll:
-                st.warning("Недостатъчно средства!")
-            else:
-                # Симулиране на резултат (за тест)
-                win = random.random() < 1 / match["odds"]
-                result = "Печалба" if win else "Загуба"
-                if win:
-                    profit = amount * (match["odds"] - 1)
-                    st.session_state.bankroll += profit
-                else:
-                    st.session_state.bankroll -= amount
+    # Симулиране на резултат по вероятност, базирана на коефициента (по-голям коефициент -> по-ниска вероятност за успех)
+    win_prob = 1 / match["odds"]
+    win = random.random() < win_prob
 
-                match["selected"] = True
-                match["prediction"] = prediction
-
-                st.session_state.bets_history.append({
-                    "id": match["id"],
-                    "match": match["match"],
-                    "prediction": prediction,
-                    "odds": match["odds"],
-                    "amount": amount,
-                    "result": result,
-                    "date": str(datetime.date.today())
-                })
-                st.success(f"{match['match']} - {result}! Текуща банка: {st.session_state.bankroll:.2f} лв.")
-
+    if win:
+        profit = amount * (match["odds"] - 1)
+        st.session_state.bankroll += profit
+        result = "Печалба"
     else:
-        st.write("⚠️ Вече заложен")
+        st.session_state.bankroll -= amount
+        result = "Загуба"
 
-# Управление на залози
-st.subheader("Управление на залози")
+    match["bet_placed"] = True
+
+    st.session_state.bets_history.append({
+        "match": match["match"],
+        "prediction": match["prediction"],
+        "odds": match["odds"],
+        "amount": amount,
+        "result": result,
+        "date": str(today)
+    })
+
+    st.success(f"{match['match']} | Прогноза: {match['prediction']} | Коефициент: {match['odds']} | {result} | Банка: {st.session_state.bankroll:.2f} лв.")
+
+if st.button("Заложи на избраните мачове"):
+    any_selected = False
+    for i, match in enumerate(st.session_state.todays_matches):
+        if match['selected'] and not match.get("bet_placed", False):
+            if bet_amount <= st.session_state.bankroll:
+                place_bet(i, bet_amount)
+                any_selected = True
+            else:
+                st.error("Нямаш достатъчно пари в банката за този залог.")
+                break
+    if not any_selected:
+        st.info("Моля, избери поне един мач и натисни бутона за залог.")
+
+st.subheader("История на залозите")
 if st.session_state.bets_history:
     for bet in st.session_state.bets_history:
-        cancel = st.button(f"Отмени залог: {bet['match']} ({bet['amount']} лв.)", key=f"cancel_{bet['id']}")
-        if cancel:
-            # Възстановяване на банка само ако още няма резултат (тук приемаме, че има)
-            if bet['result'] == "Загуба":
-                st.session_state.bankroll += bet['amount']
-            elif bet['result'] == "Печалба":
-                st.session_state.bankroll -= bet['amount'] * (bet['odds'] - 1)
-            # Премахване на залога
-            st.session_state.bets_history = [b for b in st.session_state.bets_history if b['id'] != bet['id']]
-            for m in st.session_state.todays_matches:
-                if m['id'] == bet['id']:
-                    m['selected'] = False
-            st.experimental_rerun()
+        st.write(f"{bet['date']} | {bet['match']} | Прогноза: {bet['prediction']} | Коефициент: {bet['odds']} | {bet['result']} | Залог: {bet['amount']} лв.")
 else:
-    st.write("Все още няма заложени мачове.")
+    st.write("Все още няма направени залози.")
 
-# Статистика
-st.subheader("📊 Статистика на залозите")
-
-total_bets = len(st.session_state.bets_history)
-wins = sum(1 for bet in st.session_state.bets_history if bet['result'] == "Печалба")
-losses = total_bets - wins
-profit = st.session_state.bankroll - 500
-
-st.write(f"- Общо залози: {total_bets}")
-st.write(f"- Печалби: {wins}")
-st.write(f"- Загуби: {losses}")
-st.write(f"- Обща печалба/загуба: {profit:.2f} лв.")
-
-# Графика на банката във времето
-st.subheader("Графика на банката във времето")
-
-dates = []
-banks = []
-current_bank = 500.0
-dates.append(datetime.date.today())
-banks.append(current_bank)
-
-for bet in st.session_state.bets_history:
-    if bet['result'] == "Печалба":
-        current_bank += bet['amount'] * (bet['odds'] - 1)
-    else:
-        current_bank -= bet['amount']
-    dates.append(datetime.datetime.strptime(bet['date'], "%Y-%m-%d").date())
-    banks.append(current_bank)
-
-fig, ax = plt.subplots()
-ax.plot(dates, banks, marker='o')
-ax.set_xlabel("Дата")
-ax.set_ylabel("Банка (лв.)")
-ax.set_title("Промяна на банката във времето")
-st.pyplot(fig)
-
-# Автоматичен подбор на мачове (стойностни залози)
-st.subheader("Автоматичен подбор на мачове (стойностни залози)")
+# Автоматичен подбор на стойностни залози
+st.subheader("Автоматичен подбор на стойностни залози")
 
 def is_value_bet(odds, win_prob_estimate):
-    # Ако коефициентът е по-голям от обратната вероятност = value bet
     return odds > 1 / win_prob_estimate
 
-# Примерни win_prob_estimates (можеш да подобриш с ML/статистика)
+# Примерни оценки за вероятности (можеш да развиеш с по-точни модели)
 prob_estimates = {
     "Барселона vs Хетафе": 0.7,
     "Верона vs Болоня": 0.4,
@@ -153,7 +97,7 @@ prob_estimates = {
 
 value_bets = []
 for match in st.session_state.todays_matches:
-    est = prob_estimates.get(match['match'], 0.5)  # По подразбиране 50%
+    est = prob_estimates.get(match['match'], 0.5)
     if is_value_bet(match['odds'], est):
         value_bets.append(match)
 
@@ -162,4 +106,4 @@ if value_bets:
     for vb in value_bets:
         st.write(f"- {vb['match']} | Коефициент: {vb['odds']} | Прогноза: {vb['prediction']}")
 else:
-    st.write("Няма ясни стойностни залози за д
+    st.write("Няма ясни стойностни залози за днес.")
