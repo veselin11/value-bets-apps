@@ -15,7 +15,7 @@ EUROPEAN_LEAGUES = {
 }
 
 def get_odds_for_sport(sport_key):
-    markets = "h2h,totals,bothteams"
+    markets = "h2h,totals"
     url = f"{BASE_URL}{sport_key}/odds/?regions=eu&markets={markets}&apiKey={API_KEY}"
     response = requests.get(url)
     if response.status_code == 200:
@@ -58,10 +58,8 @@ for sport_key, league_name in EUROPEAN_LEAGUES.items():
         if not bookmakers:
             continue
 
-        # За всеки мач вземаме първия букмейкър с пазарите
         bookmaker = bookmakers[0]
 
-        # Събираме стойностни залози за различни пазари
         match_value_bets = []
 
         for market in bookmaker.get('markets', []):
