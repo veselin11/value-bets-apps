@@ -1,118 +1,103 @@
 import streamlit as st
 import requests
-from bs4 import BeautifulSoup
-import numpy as np
-import pandas as pd
 
-st.title("Футболни залози - Анализ и Value Bets (Европа)")
+API_KEY = "2e086a4b6d758dec878ee7b5593405b1"
+BASE_URL = "https://api.the-odds-api.com/v4/sports/"
 
-# Функция за скрейпинг на последните 5 мача и резултати (W/D/L)
-def get_last_matches_form(team_url):
-    try:
-        res = requests.get(team_url)
-        soup = BeautifulSoup(res.text, 'html.parser')
-        form = []
-        table = soup.find('table', id='results')
-        if not table:
-            return []
-        rows = table.find_all('tr')
-        for row in rows:
-            cells = row.find_all('td')
-            if cells:
-                result = cells[6].text.strip()
-                if result in ['W', 'D', 'L']:
-                    form.append(result)
-            if len(form) == 5:
-                break
-        return form
-    except:
-        return []
-
-# Примерни URL-та на отбори в Европа (Премиър Лийг)
-teams = {
-    "Liverpool": "https://fbref.com/en/squads/18bb7c10/Liverpool-Stats",
-    "Manchester City": "https://fbref.com/en/squads/b8fd03ef/Manchester-City-Stats",
-    "Real Madrid": "https://fbref.com/en/squads/53a0f082/Real-Madrid-Stats",
-    "Barcelona": "https://fbref.com/en/squads/206d90db/Barcelona-Stats",
-    "Bayern Munich": "https://fbref.com/en/squads/b7a741f9/Bayern-Munich-Stats",
-    "Juventus": "https://fbref.com/en/squads/4f9dcd71/Juventus-Stats",
+EUROPEAN_LEAGUES = {
+    "soccer_epl": "English Premier League",
+    "soccer_spain_la_liga": "La Liga",
+    "soccer_italy_serie_a": "Serie A",
+    "soccer_germany_bundesliga": "Bundesliga",
+    "soccer_france_ligue_one": "Ligue 1",
+    "soccer_portugal_primeira_liga": "Primeira Liga",
+    "soccer_netherlands_eredivisie": "Eredivisie",
+    # Добави още, ако искаш
 }
 
-st.sidebar.header("Избери отбори")
-home_team = st.sidebar.selectbox("Домакин", list(teams.keys()))
-away_team = st.sidebar.selectbox("Гост", list(teams.keys()), index=1)
+MARKETS_TO_CHECK = ["h2h", "totals", "bothteams"]
 
-if home_team == away_team:
-    st.error("Моля, избери различни отбори.")
-    st.stop()
+def get_odds_for_sport(sport_key):
+    url = f"{BASE_URL}{sport_key}/odds/?regions=eu&markets=h2h,totals,bothteams&apiKey={API_KEY}"
+    response = requests.get(url)
+    if response.status_code == 200:
+        return response.json()
+    else:
+        st.error(f"Грешка при зареждане на коефициенти: {response.status_code}")
+        return []
 
-st.write(f"### Форма на {home_team} (последни 5 мача)")
-home_form = get_last_matches_form(teams[home_team])
-st.write(home_form)
+def is_value_bet(bookmaker_odds, my_prob):
+    # Стойностна залог, ако коефициент > 1 / вероятност
+    return bookmaker_odds > (1 / my_prob)
 
-st.write(f"### Форма на {away_team} (последни 5 мача)")
-away_form = get_last_matches_form(teams[away_team])
-st.write(away_form)
+def estimate_probabilities(odds_h2h):
+    # Тук може да сложиш сложна формула, за сега използвам имплицитната вероятност нормализирана
+    probs = [1/o if o > 0 else 0 for o in odds_h2h]
+    s = sum(probs)
+    norm_probs = [p/s for p in probs]
+    return norm_probs  # [prob_home, prob_draw, prob_away]
 
-# Проста точкова система за форма: W=3, D=1, L=0
-def form_score(form):
-    score_map = {'W':3, 'D':1, 'L':0}
-    return sum(score_map.get(r,0) for r in form)
+st.title("Стойностни футболни залози – Европа")
 
-home_form_score = form_score(home_form)
-away_form_score = form_score(away_form)
+all_matches = []
 
-st.write(f"Форма точки - {home_team}: {home_form_score}, {away_team}: {away_form_score}")
+for sport_key, league_name in EUROPEAN_LEAGUES.items():
+    matches = get_odds_for_sport(sport_key)
+    if matches:
+        for match in matches:
+            # Проверка дали са нужните пазари
+            markets = {m['key']: m for m in match.get('bookmakers', [])[0].get('markets', [])} if match.get('bookmakers') else {}
+            if not markets:
+                continue
 
-# Въвеждане на реални коефициенти от потребителя
-st.sidebar.header("Въведи коефициенти")
-odd_home = st.sidebar.number_input("Коефициент за домакин", min_value=1.01, value=2.0)
-odd_draw = st.sidebar.number_input("Коефициент за равен", min_value=1.01, value=3.5)
-odd_away = st.sidebar.number_input("Коефициент за гост", min_value=1.01, value=3.0)
+            # Вземаме 1X2 (h2h) пазар
+            h2h_market = None
+            totals_market = None
+            bothteams_market = None
 
-# Проста формула за вероятност от форма (тежест 0.5)
-w_form = 0.5
-# За демонстрация - нормализираме само форма
-total = home_form_score + away_form_score + 1e-5
-prob_home = (home_form_score / total) * w_form + (1 - w_form) / 3
-prob_away = (away_form_score / total) * w_form + (1 - w_form) / 3
-prob_draw = 1 - prob_home - prob_away
-if prob_draw < 0:
-    prob_draw = 0.1  # Корекция
+            for bookmaker in match.get('bookmakers', []):
+                for market in bookmaker.get('markets', []):
+                    if market['key'] == 'h2h':
+                        h2h_market = market
+                    elif market['key'] == 'totals':
+                        totals_market = market
+                    elif market['key'] == 'bothteams':
+                        bothteams_market = market
 
-st.write(f"Изчислени вероятности: Домакин: {prob_home:.2f}, Равен: {prob_draw:.2f}, Гост: {prob_away:.2f}")
+            if not h2h_market:
+                continue
 
-# Изчисляване на value bets
-value_home = odd_home * prob_home - 1
-value_draw = odd_draw * prob_draw - 1
-value_away = odd_away * prob_away - 1
+            # Вземаме коефициенти за 1X2
+            odds_h2h = []
+            for outcome in h2h_market['outcomes']:
+                odds_h2h.append(outcome['price'])
 
-st.write(f"Value bet за Домакин: {value_home:.3f}")
-st.write(f"Value bet за Равен: {value_draw:.3f}")
-st.write(f"Value bet за Гост: {value_away:.3f}")
+            probs = estimate_probabilities(odds_h2h)
 
-# Банка и мениджмънт
-st.sidebar.header("Управление на банка")
-bankroll = st.sidebar.number_input("Текуща банка (лв.)", min_value=1.0, value=500.0)
-risk_percent = st.sidebar.slider("Процент от банка за залог", min_value=1, max_value=10, value=3)
+            # Проверка за value bet - за всеки резултат
+            value_bets = []
+            for i, outcome in enumerate(h2h_market['outcomes']):
+                if is_value_bet(outcome['price'], probs[i]):
+                    value_bets.append({
+                        "outcome": outcome['name'],
+                        "price": outcome['price'],
+                        "probability": probs[i]
+                    })
 
-stake = bankroll * (risk_percent / 100)
+            if value_bets:
+                all_matches.append({
+                    "league": league_name,
+                    "commence_time": match['commence_time'],
+                    "home_team": match['home_team'],
+                    "away_team": match['away_team'],
+                    "value_bets": value_bets
+                })
 
-st.write(f"Препоръчан залог: {stake:.2f} лв.")
+st.write(f"Намерени стойностни залози в {len(all_matches)} мача:")
 
-# Препоръка за залог (само ако value bet > 0)
-recommendation = []
-if value_home > 0:
-    recommendation.append(f"Залог: Домакин на {home_team} със стойност {value_home:.3f}")
-if value_draw > 0:
-    recommendation.append(f"Залог: Равен резултат със стойност {value_draw:.3f}")
-if value_away > 0:
-    recommendation.append(f"Залог: Гост на {away_team} със стойност {value_away:.3f}")
-
-if recommendation:
-    st.success("Препоръчани залози:")
-    for r in recommendation:
-        st.write(r)
-else:
-    st.info("Няма изгодни залози на база въведените коефициенти и форма.")
+for m in all_matches:
+    st.markdown(f"### {m['home_team']} - {m['away_team']} ({m['league']})")
+    st.write(f"Начало: {m['commence_time']}")
+    for bet in m['value_bets']:
+        st.write(f"- Залог: **{bet['outcome']}**, Коефициент: {bet['price']}, Оценена вероятност: {bet['probability']:.2f}")
 
