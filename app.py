@@ -1,109 +1,60 @@
-// Надградена версия на приложението за стойностни залози с допълнителни функции
+import random
+import datetime
 
-import React, { useState, useEffect } from "react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+# Настройки
+bankroll = 500
+bets_history = []
 
-const mockMatches = [
-  {
-    id: 1,
-    league: "България - efbet Лига",
-    time: "18:30",
-    home: "ЦСКА София",
-    away: "Славия",
-    prediction: "1",
-    odds: 1.75,
-    analysis: "ЦСКА са в битка за титлата, Славия без мотивация",
-  },
-  {
-    id: 2,
-    league: "Англия - Висша лига",
-    time: "21:00",
-    home: "Брайтън",
-    away: "Челси",
-    prediction: "Гол/Гол",
-    odds: 1.95,
-    analysis: "И двата отбора са резултатни и без напрежение",
-  },
-];
+# Днешна дата
+today = datetime.date.today()
 
-export default function BetApp() {
-  const [matches, setMatches] = useState(mockMatches);
-  const [bankroll, setBankroll] = useState(500);
-  const [history, setHistory] = useState([]);
-  const [wins, setWins] = useState(0);
-  const [losses, setLosses] = useState(0);
+# Днешни мачове (примерни)
+todays_matches = [
+    {"match": "Барселона vs Хетафе", "odds": 1.55, "prediction": "1", "selected": False},
+    {"match": "Верона vs Болоня", "odds": 2.10, "prediction": "2", "selected": False},
+    {"match": "Брюж vs Андерлехт", "odds": 2.45, "prediction": "X", "selected": False}
+]
 
-  const placeBet = (matchId, decision) => {
-    const match = matches.find((m) => m.id === matchId);
-    const stake = parseFloat((bankroll * 0.1).toFixed(2));
-    const bet = {
-      match,
-      decision,
-      stake,
-    };
-    setHistory((prev) => [...prev, bet]);
-    if (decision === "Съгласен") {
-      setBankroll((prev) => prev - stake);
-    }
-  };
+# Функция за залагане на мач
+def place_bet(match_index, amount):
+    global bankroll
+    match = todays_matches[match_index]
+    if match["selected"]:
+        print(f"Вече си заложил на мача: {match['match']}")
+        return
 
-  const simulateResult = (matchId, isWin) => {
-    const bet = history.find((b) => b.match.id === matchId);
-    if (!bet || bet.decision !== "Съгласен") return;
+    win = random.random() < 1 / match["odds"]
+    result = "Печалба" if win else "Загуба"
+    if win:
+        profit = amount * (match["odds"] - 1)
+        bankroll += profit
+    else:
+        bankroll -= amount
 
-    const winAmount = parseFloat((bet.stake * bet.match.odds).toFixed(2));
-    if (isWin) {
-      setWins((w) => w + 1);
-      setBankroll((prev) => prev + winAmount);
-    } else {
-      setLosses((l) => l + 1);
-    }
-  };
+    match["selected"] = True
+    bets_history.append({
+        "match": match["match"],
+        "prediction": match["prediction"],
+        "odds": match["odds"],
+        "amount": amount,
+        "result": result,
+        "date": str(today)
+    })
+    print(f"{match['match']} | Прогноза: {match['prediction']} | Коефициент: {match['odds']} | {result} | Банка: {bankroll:.2f} лв.")
 
-  return (
-    <div className="p-4 space-y-4">
-      <h1 className="text-2xl font-bold">Стойностни залози за днес</h1>
-      <p>Банка: {bankroll.toFixed(2)} лв.</p>
-      <p>Печалби: {wins} | Загуби: {losses}</p>
+# Показване на днешни мачове
+print("\n--- Днешни мачове ---")
+for i, match in enumerate(todays_matches):
+    print(f"{i + 1}. {match['match']} | Прогноза: {match['prediction']} | Коефициент: {match['odds']}")
 
-      {matches.map((match) => (
-        <Card key={match.id} className="bg-white shadow p-4">
-          <CardContent>
-            <p className="font-semibold">{match.league}</p>
-            <p>
-              {match.time} - {match.home} vs {match.away}
-            </p>
-            <p>
-              Прогноза: <strong>{match.prediction}</strong> (Коеф.: {match.odds})
-            </p>
-            <p className="text-sm text-gray-600">{match.analysis}</p>
-            <div className="mt-2 space-x-2">
-              <Button onClick={() => placeBet(match.id, "Съгласен")}>Заложи</Button>
-              <Button onClick={() => placeBet(match.id, "Пропусни")} variant="outline">
-                Пропусни
-              </Button>
-              <Button onClick={() => simulateResult(match.id, true)} variant="default">
-                Симулирай Печалба
-              </Button>
-              <Button onClick={() => simulateResult(match.id, false)} variant="destructive">
-                Симулирай Загуба
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      ))}
+# Примерен избор на залози
+print("\n--- Изпълнение на залози ---")
+place_bet(0, 100)
+place_bet(1, 100)
 
-      <div>
-        <h2 className="text-xl font-bold mt-6">История на залозите</h2>
-        <ul className="list-disc ml-6">
-          {history.map((bet, idx) => (
-            <li key={idx}>
-              {bet.match.home} - {bet.match.away}: {bet.decision} ({bet.stake} лв.)
-            </li>
-          ))}
-        </ul>
-      </div>
-    </div>
-  );
-}
+# Статистика
+print("\n--- История на залозите ---")
+for bet in bets_history:
+    print(f"{bet['date']} | {bet['match']} | {bet['prediction']} | {bet['odds']} | {bet['result']} | {bet['amount']} лв.")
+
+print(f"\nТекуща банка: {bankroll:.2f} лв.")
