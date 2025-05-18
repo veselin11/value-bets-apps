@@ -1,75 +1,129 @@
+# value_bets_detector.py
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
+from datetime import datetime, timedelta
+import pandas as pd
+import math
+import re
 
-def parse_team_form(team_name):
-    # Примерен парсинг от flashscore (работи ако URL е достъпен)
-    team_slug = team_name.lower().replace(' ', '-')
-    url = f"https://www.flashscore.com/team/{team_slug}/results/"
-    headers = {'User-Agent': 'Mozilla/5.0'}
+# === Настройки на API ===
+ODDS_API_KEY = "2e086a4b6d758dec878ee7b5593405b1"
+FOOTBALL_DATA_API_KEY = "e004e3601abd4b108a653f9f3a8c5ede"
+
+# === Помощни функции ===
+def implied_probability(odds):
+    return 1 / odds if odds > 0 else 0
+
+def value_bet_check(prob, odds):
+    return prob > implied_probability(odds)
+
+def kelly_criterion(prob, odds):
+    return ((prob * (odds - 1)) - (1 - prob)) / (odds - 1)
+
+# === Извличане на Flashscore линкове ===
+def search_flashscore_team_url(team_name):
+    search_url = f"https://www.flashscore.com/search/?q={team_name.replace(' ', '%20')}"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    r = requests.get(search_url, headers=headers)
+    soup = BeautifulSoup(r.text, "html.parser")
+    for a in soup.find_all("a", href=True):
+        if "/team/" in a["href"]:
+            return "https://www.flashscore.com" + a["href"]
+    return None
+
+def get_team_form(flashscore_url):
     try:
-        resp = requests.get(url, headers=headers, timeout=5)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, 'html.parser')
-        results_div = soup.find_all('div', class_='event__result')
+        headers = {"User-Agent": "Mozilla/5.0"}
+        r = requests.get(flashscore_url + "results/", headers=headers)
+        soup = BeautifulSoup(r.text, "html.parser")
         form = []
-        for res in results_div[:5]:
-            text = res.text.strip()
-            if '-' in text:
-                home_goals, away_goals = text.split('-')
-                home_goals, away_goals = int(home_goals), int(away_goals)
-                # За пример винаги приемаме, че търсим резултата за домакин (прецизирай по нужда)
-                if home_goals > away_goals:
-                    form.append('W')
-                elif home_goals == away_goals:
-                    form.append('D')
-                else:
-                    form.append('L')
-            else:
-                form.append('U')
+        for result in soup.select(".event__match--static")[:5]:
+            if "event__match--won" in result["class"]:
+                form.append("W")
+            elif "event__match--draw" in result["class"]:
+                form.append("D")
+            elif "event__match--lost" in result["class"]:
+                form.append("L")
         return form
-    except Exception as e:
-        st.warning(f"Грешка при зареждане на форма за {team_name}: {e}")
+    except:
         return []
 
-def parse_head_to_head(home, away):
-    # Тук ще използваме фиктивни данни или същия метод за парсинг
-    # Вариант: да се добави реален парсинг от flashscore / друг сайт по-късно
-    return {
-        'matches_played': 5,
-        'home_wins': 2,
-        'away_wins': 1,
-        'draws': 2
-    }
+def calculate_form_score(form):
+    score = 0
+    for f in form:
+        if f == "W": score += 3
+        elif f == "D": score += 1
+    return score / (len(form) * 3) if form else 0.5
 
+# === Зареждане на коефициенти от Odds API ===
+def load_odds():
+    url = "https://api.the-odds-api.com/v4/sports/soccer_epl/odds"
+    params = {
+        "apiKey": ODDS_API_KEY,
+        "regions": "eu",
+        "markets": "h2h,totals",
+        "oddsFormat": "decimal"
+    }
+    r = requests.get(url, params=params)
+    if r.status_code != 200:
+        st.error(f"Грешка при зареждане на коефициенти: {r.status_code} - {r.text}")
+        return []
+    return r.json()
+
+# === Основно приложение ===
 def main():
     st.title("Автоматичен детектор на стойностни футболни залози с форма и H2H")
 
-    # Тук зареждаш мачове и коефициенти от The Odds API - пример:
-    matches = [
-        {'home': 'Manchester United', 'away': 'Liverpool', 'markets': {'1X2': {'home_win': 2.4, 'draw': 3.3, 'away_win': 2.8}}},
-        # Добави реални мачове тук
-    ]
+    with st.spinner("Зареждане на мачове и коефициенти..."):
+        odds_data = load_odds()
 
-    for match in matches:
-        st.subheader(f"{match['home']} vs {match['away']}")
+    if not odds_data:
+        st.warning("Няма налични мачове.")
+        return
 
-        home_form = parse_team_form(match['home'])
-        away_form = parse_team_form(match['away'])
-        h2h = parse_head_to_head(match['home'], match['away'])
+    for match in odds_data:
+        home_team = match['home_team']
+        away_team = match['away_team']
+        bookmakers = match.get('bookmakers', [])
 
-        st.write(f"Форма {match['home']}: {' '.join(home_form)}")
-        st.write(f"Форма {match['away']}: {' '.join(away_form)}")
-        st.write(f"H2H статистика: Игри: {h2h['matches_played']}, Победи домакин: {h2h['home_wins']}, Победи гост: {h2h['away_wins']}, Равенства: {h2h['draws']}")
+        if not bookmakers:
+            continue
 
-        # Логика за изчисляване на вероятности и стойностни залози
-        # Пример (опростено):
-        # Ако домакинът е в по-добра форма и по-добър H2H резултат -> препоръка за победа на домакин
+        bookie = bookmakers[0]
+        markets = {m['key']: m for m in bookie['markets']}
+        odds_h2h = {o['name']: o['price'] for o in markets.get('h2h', {}).get('outcomes', [])}
+        odds_totals = markets.get('totals', {}).get('outcomes', [])
 
-        if home_form.count('W') > away_form.count('W') and h2h['home_wins'] > h2h['away_wins']:
-            st.success(f"Препоръка: Залог за победа на {match['home']} с коеф. {match['markets']['1X2']['home_win']}")
-        else:
-            st.info("Няма ясна стойностна препоръка.")
+        # Зареждане на форма
+        home_url = search_flashscore_team_url(home_team)
+        away_url = search_flashscore_team_url(away_team)
+        home_form = get_team_form(home_url) if home_url else []
+        away_form = get_team_form(away_url) if away_url else []
 
-if __name__ == "__main__":
+        form_home_score = calculate_form_score(home_form)
+        form_away_score = calculate_form_score(away_form)
+
+        st.subheader(f"{home_team} vs {away_team}")
+        st.write(f"Форма {home_team}: {'-'.join(home_form)} ({form_home_score:.2f})")
+        st.write(f"Форма {away_team}: {'-'.join(away_form)} ({form_away_score:.2f})")
+
+        # Оценка 1X2
+        total = form_home_score + form_away_score
+        prob_home = form_home_score / total if total else 0.5
+        prob_away = form_away_score / total if total else 0.5
+
+        if 'home' in odds_h2h:
+            odds_home = odds_h2h['home']
+            if value_bet_check(prob_home, odds_home):
+                st.success(f"✅ Стойностен залог: Победа за {home_team} @ {odds_home:.2f}")
+
+        if 'away' in odds_h2h:
+            odds_away = odds_h2h['away']
+            if value_bet_check(prob_away, odds_away):
+                st.success(f"✅ Стойностен залог: Победа за {away_team} @ {odds_away:.2f}")
+
+        st.markdown("---")
+
+if __name__ == '__main__':
     main()
