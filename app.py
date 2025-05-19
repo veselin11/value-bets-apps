@@ -7,25 +7,25 @@ import pytz
 ODDS_API_KEY = "2e086a4b6d758dec878ee7b5593405b1"
 API_FOOTBALL_KEY = "cb4a5917231d8b20dd6b85ae9d025e6e"
 
-st.title("Стойностни залози чрез сравнение с Pinnacle и по-умна оценка")
+st.title("Стойностни залози чрез сравнение с Pinnacle")
 
-# --- Функция за реална оценка на вероятностите (примерно с форма, може да се надгражда) ---
-def get_probabilities(home_stats, away_stats):
-    # Примерна логика: ако домакинът има по-добра форма, по-голяма вероятност за победа
-    if home_stats["form_rank"] < away_stats["form_rank"]:
-        return 0.55, 0.25, 0.20  # домакин силен
-    elif away_stats["form_rank"] < home_stats["form_rank"]:
-        return 0.20, 0.25, 0.55  # гост силен
+# --- Нашата оценка (примерно базирана на форма) ---
+def get_probabilities(home, away):
+    # Тук може да се подобри с реални данни
+    if home[0] < away[0]:
+        return 0.45, 0.3, 0.25
+    elif away[0] < home[0]:
+        return 0.25, 0.3, 0.45
     else:
-        return 0.33, 0.34, 0.33   # равенство или близки
+        return 0.33, 0.34, 0.33
 
-# --- Извличане на коефициенти и сравнение с Pinnacle ---
+# --- Извличане на коефициенти ---
 def get_best_odds_vs_pinnacle(bookmakers, market_key):
     pinnacle_odds = {}
     best_diff = -1
     best_bookmaker = None
 
-    # Намери Pinnacle коефициенти
+    # 1. Намери Pinnacle
     for bm in bookmakers:
         if bm["key"] == "pinnacle":
             for m in bm["markets"]:
@@ -37,7 +37,7 @@ def get_best_odds_vs_pinnacle(bookmakers, market_key):
     if not pinnacle_odds:
         return None
 
-    # Търси най-добра оферта, която е значително по-висока от Pinnacle
+    # 2. Намери най-добра оферта от другите
     for bm in bookmakers:
         if bm["key"] == "pinnacle":
             continue
@@ -57,19 +57,10 @@ def get_best_odds_vs_pinnacle(bookmakers, market_key):
                                 "pinnacle": pinnacle_odds[name],
                                 "diff": round(diff, 2)
                             }
-    # Филтър за минимална разлика, за да е залогът стойностен
-    return best_bookmaker if best_bookmaker and best_bookmaker["diff"] >= 0.2 else None
+    return best_bookmaker if best_bookmaker and best_bookmaker["diff"] >= 0.1 else None
 
-# --- Примерна функция за извличане на статистика (тук е просто фиктивна, трябва да се добави реална интеграция) ---
-def get_team_stats(team_name):
-    # Примерни данни, може да замениш с реално извличане от API-Football
-    dummy_stats = {
-        "form_rank": hash(team_name) % 10  # просто рандом стойност за пример
-    }
-    return dummy_stats
-
-# --- Основен код ---
-url = "https://api.the-odds-api.com/v4/sports/soccer/odds"
+# --- Извличане на мачове ---
+url = f"https://api.the-odds-api.com/v4/sports/soccer/odds"
 params = {
     "regions": "eu",
     "markets": "h2h",
@@ -93,9 +84,7 @@ try:
 
         best = get_best_odds_vs_pinnacle(match["bookmakers"], "h2h")
         if best:
-            home_stats = get_team_stats(home)
-            away_stats = get_team_stats(away)
-            prob_home, prob_draw, prob_away = get_probabilities(home_stats, away_stats)
+            prob_home, prob_draw, prob_away = get_probabilities(home, away)
 
             if best["team"] == home:
                 prob = prob_home
@@ -106,8 +95,8 @@ try:
 
             value = round(prob * best["price"], 2)
 
-            # Филтриране за по-висока вероятност и адекватни коефициенти
-            if prob >= 0.55 and 1.3 <= best["price"] <= 1.8 and value >= 1.05:
+            # Новите параметри за филтриране:
+            if prob >= 0.50 and 1.2 <= best["price"] <= 2.0 and value >= 1.02:
                 color = "green"
                 st.markdown(f"### {home} vs {away} ({time.strftime('%Y-%m-%d %H:%M')})")
                 st.markdown(
