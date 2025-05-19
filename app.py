@@ -1,88 +1,114 @@
-import requests
 import streamlit as st
+import requests
 from datetime import datetime
+import pytz
 
-API_KEY = "2e086a4b6d758dec878ee7b5593405b1"
-BASE_URL = "https://api.the-odds-api.com/v4/sports/soccer/odds"
-
-# Статични оценки на вероятност (примерни, може да се подобрят допълнително)
-def estimate_probability(team: str, opponent: str) -> float:
-    # Примерна вероятност на база име (за реална оценка да се използва H2H, форма и класиране)
-    return 0.40  # Засега фиксирана, ще се подобри по-късно със статистика
-
-def calculate_value(odd: float, probability: float) -> float:
-    return odd * probability
+# API ключове
+ODDS_API_KEY = "2e086a4b6d758dec878ee7b5593405b1"
+API_FOOTBALL_KEY = "cb4a5917231d8b20dd6b85ae9d025e6e"
 
 st.title("Стойностни залози чрез сравнение с Pinnacle")
 
+# --- Нашата оценка (примерно базирана на форма) ---
+def get_probabilities(home, away):
+    # Тук може да се подобри с реални данни
+    if home[0] < away[0]:
+        return 0.45, 0.3, 0.25  # Пример: домакин с предимство
+    elif away[0] < home[0]:
+        return 0.25, 0.3, 0.45
+    else:
+        return 0.33, 0.34, 0.33
+
+# --- Извличане на коефициенти ---
+def get_best_odds_vs_pinnacle(bookmakers, market_key):
+    pinnacle_odds = {}
+    best_diff = -1
+    best_bookmaker = None
+
+    # 1. Намери Pinnacle
+    for bm in bookmakers:
+        if bm["key"] == "pinnacle":
+            for m in bm["markets"]:
+                if m["key"] == market_key:
+                    for outcome in m["outcomes"]:
+                        pinnacle_odds[outcome["name"]] = outcome["price"]
+            break
+
+    if not pinnacle_odds:
+        return None
+
+    # 2. Намери най-добра оферта от другите
+    for bm in bookmakers:
+        if bm["key"] == "pinnacle":
+            continue
+        for m in bm["markets"]:
+            if m["key"] == market_key:
+                for outcome in m["outcomes"]:
+                    name = outcome["name"]
+                    price = outcome["price"]
+                    if name in pinnacle_odds:
+                        diff = price - pinnacle_odds[name]
+                        if diff > best_diff:
+                            best_diff = diff
+                            best_bookmaker = {
+                                "bookmaker": bm["key"],
+                                "team": name,
+                                "price": price,
+                                "pinnacle": pinnacle_odds[name],
+                                "diff": round(diff, 2)
+                            }
+    return best_bookmaker if best_bookmaker and best_bookmaker["diff"] >= 0.2 else None
+
+# --- Извличане на мачове ---
+url = f"https://api.the-odds-api.com/v4/sports/soccer/odds"
 params = {
     "regions": "eu",
     "markets": "h2h",
     "oddsFormat": "decimal",
     "dateFormat": "iso",
-    "apiKey": API_KEY,
     "daysFrom": 0,
-    "daysTo": 2
+    "daysTo": 2,
+    "apiKey": ODDS_API_KEY
 }
 
-response = requests.get(BASE_URL, params=params)
-
-if response.status_code != 200:
-    st.error(f"Грешка при зареждане: {response.status_code} - {response.text}")
-else:
+try:
+    response = requests.get(url, params=params)
+    response.raise_for_status()
     matches = response.json()
-    st.markdown(f"Общо заредени мачове: **{len(matches)}**")
-    
-    value_bets = []
+    shown = 0
 
     for match in matches:
-        bookmakers = match.get("bookmakers", [])
-        pinnacle = next((b for b in bookmakers if b["key"] == "pinnacle"), None)
+        home = match["home_team"]
+        away = match["away_team"]
+        time = datetime.fromisoformat(match["commence_time"].replace("Z", "+00:00")).astimezone(pytz.timezone("Europe/Sofia"))
 
-        if not pinnacle:
-            continue
+        best = get_best_odds_vs_pinnacle(match["bookmakers"], "h2h")
+        if best:
+            prob_home, prob_draw, prob_away = get_probabilities(home, away)
 
-        pinnacle_odds = {o['name']: o['price'] for o in pinnacle['markets'][0]['outcomes']}
+            if best["team"] == home:
+                prob = prob_home
+            elif best["team"] == away:
+                prob = prob_away
+            else:
+                prob = prob_draw
 
-        for bookmaker in bookmakers:
-            if bookmaker['key'] == "pinnacle":
-                continue
+            value = round(prob * best["price"], 2)
+            color = "green" if value > 1.2 else "white"
 
-            for outcome in bookmaker['markets'][0]['outcomes']:
-                name = outcome['name']
-                odd = outcome['price']
-                pin_odd = pinnacle_odds.get(name)
+            st.markdown(f"### {home} vs {away} ({time.strftime('%Y-%m-%d %H:%M')})")
+            st.markdown(
+                f"<span style='color:{color}'>"
+                f"{best['team']} при {best['bookmaker']}: {best['price']} | Pinnacle: {best['pinnacle']} | "
+                f"Разлика: +{best['diff']}<br>"
+                f"→ Вероятност: {prob:.2f}, Стойност: {value:.2f}"
+                f"{' → <strong>Стойностен залог!</strong>' if value > 1.2 else ''}"
+                f"</span>",
+                unsafe_allow_html=True
+            )
+            shown += 1
 
-                if not pin_odd or odd <= pin_odd:
-                    continue
+    st.success(f"Общо стойностни предложения: {shown}")
 
-                probability = estimate_probability(name, "")
-                value = calculate_value(odd, probability)
-                diff = odd - pin_odd
-
-                if value > 1.20:
-                    value_bets.append({
-                        "match": match['home_team'] + " vs " + match['away_team'],
-                        "time": match['commence_time'],
-                        "selection": name,
-                        "bookmaker": bookmaker['key'],
-                        "book_odd": odd,
-                        "pin_odd": pin_odd,
-                        "diff": diff,
-                        "prob": probability,
-                        "value": value
-                    })
-
-    if not value_bets:
-        st.warning("Няма намерени стойностни залози.")
-    else:
-        sorted_bets = sorted(value_bets, key=lambda x: x['value'], reverse=True)
-
-        for bet in sorted_bets:
-            match_time = datetime.fromisoformat(bet['time'].replace("Z", "")).strftime("%Y-%m-%d %H:%M")
-            st.markdown(f"**{bet['match']} ({match_time})**")
-            st.markdown(f"{bet['selection']} при **{bet['bookmaker']}**: {bet['book_odd']} | Pinnacle: {bet['pin_odd']} | "
-                        f"Разлика: +{bet['diff']:.2f}")
-            st.markdown(f"→ Вероятност: **{bet['prob']}**, Стойност: **{bet['value']:.2f}**")
-            st.success("→ Стойностен залог!")
-            st.markdown("---")
+except Exception as e:
+    st.error(f"Грешка при зареждане: {e}")
