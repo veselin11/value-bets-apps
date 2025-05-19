@@ -40,8 +40,7 @@ def get_api_football(endpoint, params=None):
         data = response.json()
         stats_cache[key] = data
         save_cache()
-        # Лека пауза за rate limiting
-        sleep(1)
+        sleep(1)  # Пауза за rate limit
         return data
     else:
         st.warning(f"Грешка при API-Football: {response.status_code} {response.text}")
@@ -49,13 +48,10 @@ def get_api_football(endpoint, params=None):
 
 # --- Вземане на последни 5 мача (форма) на отбор ---
 def get_team_form(team_name):
-    # Търсене на отбор по име (примерно)
     data = get_api_football("teams", {"search": team_name})
     if not data or not data["response"]:
         return []
     team_id = data["response"][0]["team"]["id"]
-
-    # Последни 5 мача на този отбор
     matches_data = get_api_football("fixtures", {"team": team_id, "last": 5})
     if not matches_data or not matches_data["response"]:
         return []
@@ -63,15 +59,12 @@ def get_team_form(team_name):
 
 # --- Вземане на head to head между два отбора ---
 def get_h2h(home_team, away_team):
-    # Търсим двата отбора
     home_data = get_api_football("teams", {"search": home_team})
     away_data = get_api_football("teams", {"search": away_team})
     if not home_data or not away_data or not home_data["response"] or not away_data["response"]:
         return None
-
     home_id = home_data["response"][0]["team"]["id"]
     away_id = away_data["response"][0]["team"]["id"]
-
     h2h_data = get_api_football("fixtures/headtohead", {"h2h": f"{home_id}-{away_id}"})
     if not h2h_data or not h2h_data["response"]:
         return None
@@ -79,7 +72,6 @@ def get_h2h(home_team, away_team):
 
 # --- Изчисляване на вероятности по прост модел (на база форма и H2H) ---
 def calc_probabilities(home_form, away_form, h2h):
-    # За пример: броим победи, равни и загуби последните 5 мача (формата) + head to head резултати
     def form_stats(matches, team_name):
         wins = draws = losses = 0
         for m in matches:
@@ -106,10 +98,12 @@ def calc_probabilities(home_form, away_form, h2h):
         total = wins + draws + losses
         return wins, draws, losses, total
 
-    home_w, home_d, home_l, home_t = form_stats(home_form, home_form[0]["teams"]["home"]["name"] if home_form else "")
-    away_w, away_d, away_l, away_t = form_stats(away_form, away_form[0]["teams"]["home"]["name"] if away_form else "")
+    home_team_name = home_form[0]["teams"]["home"]["name"] if home_form else ""
+    away_team_name = away_form[0]["teams"]["home"]["name"] if away_form else ""
 
-    # H2H
+    home_w, home_d, home_l, home_t = form_stats(home_form, home_team_name)
+    away_w, away_d, away_l, away_t = form_stats(away_form, away_team_name)
+
     h2h_w = h2h_d = h2h_l = 0
     for match in h2h or []:
         home_goals = match["goals"]["home"]
@@ -124,7 +118,6 @@ def calc_probabilities(home_form, away_form, h2h):
             h2h_l += 1
     h2h_t = h2h_w + h2h_d + h2h_l
 
-    # Примерно тежене (50% форма, 50% H2H)
     total_home = (home_w + 0.5 * home_d) / max(home_t,1)
     total_away = (away_w + 0.5 * away_d) / max(away_t,1)
     total_h2h = (h2h_w + 0.5 * h2h_d) / max(h2h_t,1)
@@ -132,7 +125,8 @@ def calc_probabilities(home_form, away_form, h2h):
     prob_home_win = round(0.5 * total_home + 0.5 * total_h2h, 2)
     prob_away_win = round(0.5 * total_away + 0.5 * (1 - total_h2h), 2)
     prob_draw = round(1 - prob_home_win - prob_away_win, 2)
-    if prob_draw < 0: prob_draw = 0.0
+    if prob_draw < 0:
+        prob_draw = 0.0
 
     return prob_home_win, prob_draw, prob_away_win
 
@@ -142,10 +136,26 @@ def kelly_criterion(prob, odds, bankroll=1000):
     kelly = (b * prob - (1 - prob)) / b
     return max(kelly, 0) * bankroll
 
+# --- Филтриране пазари и букмейкъри ---
+def filter_markets_by_bookmaker(bookmakers):
+    filtered_markets = []
+    for bookmaker in bookmakers:
+        if bookmaker.get('key') in ALLOWED_BOOKMAKERS:
+            for market in bookmaker.get('markets', []):
+                # Премахваме "goal/goal" пазари
+                if market['key'] in ['h2h', 'totals']:
+                    filtered_markets.append({
+                        'bookmaker': bookmaker['title'],
+                        'key': market['key'],
+                        'outcomes': market['outcomes']
+                    })
+    return filtered_markets
+
 # --- Основно приложение --- #
 st.title("Детектор на стойностни футболни залози с реална статистика")
 
 st.markdown("### Зареждане на футболни мачове и коефициенти от The Odds API")
+
 odds_url = f"https://api.the-odds-api.com/v4/sports/soccer/odds"
 params = {
     "regions": "eu",
@@ -174,25 +184,14 @@ try:
             st.markdown(f"## {home} vs {away} ({time_str})")
 
             bookmakers = match.get('bookmakers', [])
-            # Филтриране букмейкъри
-            markets = []
-            for bookmaker in bookmakers:
-                if bookmaker.get('key') in ALLOWED_BOOKMAKERS:
-                    markets.extend(bookmaker.get('markets', []))
+            markets = filter_markets_by_bookmaker(bookmakers)
 
             if not markets:
                 st.write("❌ Пропуснат мач – няма пазари от избраните букмейкъри.")
                 continue
 
-            # Вземане на статистика и вероятности
             home_form = get_team_form(home)
             away_form = get_team_form(away)
             h2h = get_h2h(home, away)
 
-            prob_home, prob_draw, prob_away = calc_probabilities(home_form, away_form, h2h)
-
-            st.write(f"Вероятности (по модел): Домашен: {prob_home}, Равен: {prob_draw}, Гост: {prob_away}")
-
-            # Показване на стойностни залози за всеки пазар
-            for market in markets:
-                if market['key'] == 'h2
+            prob_home, prob_draw,
