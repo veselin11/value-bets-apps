@@ -1,98 +1,83 @@
 import streamlit as st
 import requests
 from datetime import datetime
-import pytz
 
-# Кеширане
-team_form_cache = {}
-API_FOOTBALL_KEY = "cb4a5917231d8b20dd6b85ae9d025e6e"
-ODDS_API_KEY = "2e086a4b6d758dec878ee7b5593405b1"
+API_KEY = "2e086a4b6d758dec878ee7b5593405b1"
+SPORT = "soccer"
+REGION = "eu"
+MARKETS = "h2h"
 
-ALLOWED_BOOKMAKERS = ["bet365", "unibet", "williamhill", "bwin", "betfair", "10bet"]
+st.set_page_config(page_title="Стойностни Залози спрямо Pinnacle", layout="wide")
+st.title("Стойностни залози чрез сравнение с Pinnacle")
 
-st.title("Стойностни залози (Pinnacle като база)")
+# Изчисление на вероятности по наша логика
+def calculate_probabilities(teams):
+    return {"home": 0.40, "draw": 0.30, "away": 0.30}  # примерна логика
 
-# Вземане на форма
-def get_team_form(team_name):
-    if team_name in team_form_cache:
-        return team_form_cache[team_name]
-    try:
-        url = f"https://v3.football.api-sports.io/teams?search={team_name}"
-        headers = {"x-apisports-key": API_FOOTBALL_KEY}
-        team_id = requests.get(url, headers=headers).json()['response'][0]['team']['id']
-
-        stats_url = f"https://v3.football.api-sports.io/teams/statistics?team={team_id}&season=2024&league=1"
-        stats = requests.get(stats_url, headers=headers).json()
-        form_str = stats.get("response", {}).get("form", "")
-        score = form_str.count("W") / len(form_str) if form_str else 0.5
-    except:
-        score = 0.5
-    team_form_cache[team_name] = score
-    return score
-
-# Наш модел за вероятности
-def calculate_probabilities(home, away):
-    form_home = get_team_form(home)
-    form_away = get_team_form(away)
-    prob_home = round(0.4 + (form_home - form_away) * 0.3, 2)
-    prob_away = round(0.4 + (form_away - form_home) * 0.3, 2)
-    prob_draw = round(1 - prob_home - prob_away, 2)
-    return max(min(prob_home, 0.85), 0.05), max(min(prob_draw, 0.85), 0.05), max(min(prob_away, 0.85), 0.05)
-
-# Заявка към Odds API
-url = "https://api.the-odds-api.com/v4/sports/soccer/odds"
+url = f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds"
 params = {
-    "regions": "eu",
-    "markets": "h2h",
+    "regions": REGION,
+    "markets": MARKETS,
     "oddsFormat": "decimal",
-    "apiKey": ODDS_API_KEY
+    "apiKey": API_KEY
 }
 
-try:
-    res = requests.get(url, params=params)
-    res.raise_for_status()
-    matches = res.json()
+response = requests.get(url, params=params)
+if response.status_code != 200:
+    st.error(f"Грешка при зареждане: {response.status_code} {response.text}")
+    st.stop()
 
-    for match in matches:
-        home = match['home_team']
-        away = match['away_team']
-        time = datetime.fromisoformat(match['commence_time'].replace('Z', '+00:00')).astimezone(pytz.timezone("Europe/Sofia"))
-        bookmakers = match.get("bookmakers", [])
+data = response.json()
+st.write(f"Общо заредени мачове: {len(data)}")
 
-        pinnacle = next((b for b in bookmakers if b['key'] == "pinnacle"), None)
-        if not pinnacle:
+for match in data:
+    teams = match.get("teams", [])
+    commence_time = datetime.fromisoformat(match["commence_time"]).strftime("%Y-%m-%d %H:%M")
+    bookmakers = match.get("bookmakers", [])
+
+    pinnacle = next((b for b in bookmakers if b["key"] == "pinnacle"), None)
+    if not pinnacle:
+        continue
+
+    pinnacle_market = next((m for m in pinnacle["markets"] if m["key"] == "h2h"), None)
+    if not pinnacle_market:
+        continue
+
+    pinnacle_outcomes = {o["name"]: o["price"] for o in pinnacle_market["outcomes"]}
+
+    for bookmaker in bookmakers:
+        if bookmaker["key"] == "pinnacle":
             continue
 
-        pinnacle_odds = {o['name']: o['price'] for o in pinnacle['markets'][0]['outcomes']}
+        market = next((m for m in bookmaker["markets"] if m["key"] == "h2h"), None)
+        if not market:
+            continue
 
-        for bookmaker in bookmakers:
-            if bookmaker['key'] not in ALLOWED_BOOKMAKERS:
-                continue
+        for outcome in market["outcomes"]:
+            name = outcome["name"]
+            other_odds = outcome["price"]
+            pinnacle_odds = pinnacle_outcomes.get(name)
 
-            for outcome in bookmaker['markets'][0]['outcomes']:
-                team = outcome['name']
-                other_odds = outcome['price']
-                pin_odds = pinnacle_odds.get(team)
+            if pinnacle_odds and other_odds > pinnacle_odds:
+                market_value = other_odds / pinnacle_odds
 
-                if not pin_odds:
-                    continue
-
-                market_value = (1 / pin_odds) * other_odds
                 if market_value > 1.20:
-                    prob_home, prob_draw, prob_away = calculate_probabilities(home, away)
-
-                    if team == home:
-                        prob = prob_home
-                    elif team == away:
-                        prob = prob_away
+                    probs = calculate_probabilities(teams)
+                    if name == teams[0]:  # home
+                        prob = probs["home"]
+                    elif name == teams[1]:  # away
+                        prob = probs["away"]
                     else:
-                        prob = prob_draw
+                        prob = probs["draw"]
 
                     custom_value = prob * other_odds
 
-                    if custom_value > 1.05:
-                        st.subheader(f"{home} vs {away} ({time.strftime('%Y-%m-%d %H:%M')})")
-                        st.markdown(f"**Стойностен залог:** {team} при {bookmaker['key']} @ {other_odds} (value: {market_value:.2f}, model: {custom_value:.2f})")
-
-except Exception as e:
-    st.error(f"Грешка при зареждане: {e}")
+                    st.markdown("---")
+                    st.subheader(f"{teams[0]} vs {teams[1]} ({commence_time})")
+                    st.write(f"**Букмейкър:** {bookmaker['title']}")
+                    st.write(f"**Пазар:** {name}")
+                    st.write(f"**Коефициент в {bookmaker['key']}:** {other_odds}")
+                    st.write(f"**Коефициент в Pinnacle:** {pinnacle_odds}")
+                    st.write(f"**Отклонение (value):** {market_value:.2f}")
+                    st.write(f"**Нашата оценка (value):** {custom_value:.2f}")
+                    
