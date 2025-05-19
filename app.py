@@ -14,7 +14,8 @@ params = {
     "oddsFormat": "decimal",
     "dateFormat": "iso",
     "daysFrom": 0,
-    "daysTo": 3,
+    "daysTo": 2
+    ,
     "apiKey": ODDS_API_KEY
 }
 
