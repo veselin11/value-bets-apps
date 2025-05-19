@@ -3,10 +3,10 @@ import requests
 from datetime import datetime
 import pytz
 
-# Въведи своя API ключ тук
+# Твоят API ключ за The Odds API
 ODDS_API_KEY = "2e086a4b6d758dec878ee7b5593405b1"
 
-st.title("Всички футболни мачове и коефициенти (h2h)")
+st.title("Всички футболни мачове и коефициенти (h2h) без регионален филтър")
 
 url = "https://api.the-odds-api.com/v4/sports/soccer/odds"
 params = {
@@ -14,8 +14,7 @@ params = {
     "oddsFormat": "decimal",
     "dateFormat": "iso",
     "daysFrom": 0,
-    "daysTo": 2
-    ,
+    "daysTo": 2,  # Максимум 2 дни напред
     "apiKey": ODDS_API_KEY
 }
 
@@ -40,6 +39,6 @@ try:
                 if market["key"] == "h2h":
                     for outcome in market["outcomes"]:
                         st.write(f"{outcome['name']}: {outcome['price']}")
-
+                        
 except Exception as e:
     st.error(f"Грешка при зареждане: {e}")
