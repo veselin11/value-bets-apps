@@ -2,9 +2,33 @@ import streamlit as st
 import requests
 from datetime import datetime
 
-st.title("Автоматичен детектор на стойностни футболни залози")
+st.title("Детектор на стойностни футболни залози")
 
 ODDS_API_KEY = "2e086a4b6d758dec878ee7b5593405b1"
+
+def get_matches(sport_key, markets):
+    odds_url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
+    params = {
+        "regions": "eu",
+        "markets": markets,
+        "oddsFormat": "decimal",
+        "dateFormat": "iso",
+        "daysFrom": 0,
+        "daysTo": 3,
+        "apiKey": ODDS_API_KEY
+    }
+    try:
+        response = requests.get(odds_url, params=params)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.HTTPError as e:
+        if response.status_code == 422 and ',' in markets:
+            # Ако има няколко пазара и има грешка, пробваме само с 'h2h'
+            if markets != "h2h":
+                st.warning(f"Пазарите '{markets}' не са налични, опитвам само с 'h2h'.")
+                return get_matches(sport_key, "h2h")
+        st.warning(f"Пропуснат спорт с ключ {sport_key} за пазар {markets} (грешка {response.status_code})")
+        return []
 
 try:
     sports_url = f"https://api.the-odds-api.com/v4/sports/?apiKey={ODDS_API_KEY}"
@@ -12,7 +36,6 @@ try:
     response.raise_for_status()
     sports = response.json()
 
-    # Филтриране само на футбол
     football_sports = [sport for sport in sports if "soccer" in sport['key'].lower()]
     if not football_sports:
         st.write("Не са намерени футболни спортове.")
@@ -22,28 +45,7 @@ try:
             sport_title = sport['title']
             st.write(f"Лига: {sport_title}")
 
-            odds_url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
-            params = {
-                "regions": "eu",
-                "markets": "h2h,totals,btts",
-                "oddsFormat": "decimal",
-                "dateFormat": "iso",
-                "daysFrom": 0,
-                "daysTo": 3,
-                "apiKey": ODDS_API_KEY
-            }
-
-            try:
-                odds_response = requests.get(odds_url, params=params)
-                odds_response.raise_for_status()
-            except requests.exceptions.HTTPError as http_err:
-                if odds_response.status_code == 422:
-                    st.warning(f"Пропуснат спорт {sport_title} - пазарите не са налични.")
-                    continue
-                else:
-                    raise http_err
-
-            matches = odds_response.json()
+            matches = get_matches(sport_key, "h2h,totals,btts")
             if not matches:
                 st.write("  Няма мачове или грешка при зареждане.")
                 continue
