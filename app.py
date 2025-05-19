@@ -1,123 +1,85 @@
-import streamlit as st
-import requests
-from datetime import datetime
+import requests import json import os from datetime import datetime, timedelta
 
-# API ключове
 ODDS_API_KEY = "2e086a4b6d758dec878ee7b5593405b1"
-API_FOOTBALL_KEY = "cb4a5917231d8b20dd6b85ae9d025e6e"
 
-# Заглавие
-st.title("Детектор на стойностни футболни залози с форма и H2H")
+Ограничени букмейкъри
 
-HEADERS_FOOTBALL = {
-    'x-apisports-key': API_FOOTBALL_KEY
+ALLOWED_BOOKMAKERS = ["bet365", "pinnacle", "unibet"]
+
+Кеширане
+
+CACHE_FILE = "stats_cache.json"
+
+def load_cache(filename): if os.path.exists(filename): with open(filename, 'r') as f: return json.load(f) return {}
+
+def save_cache(filename, data): with open(filename, 'w') as f: json.dump(data, f)
+
+def get_cached_or_fetch(key, fetch_function): cache = load_cache(CACHE_FILE) now = datetime.utcnow()
+
+if key in cache:
+    cached_time = datetime.fromisoformat(cache[key]['timestamp'])
+    if now - cached_time < timedelta(hours=6):
+        return cache[key]['data']
+
+data = fetch_function()
+cache[key] = {'timestamp': now.isoformat(), 'data': data}
+save_cache(CACHE_FILE, cache)
+return data
+
+def estimate_probability(home_stats, away_stats, league_avg=None): if home_stats and away_stats: home_win_rate = home_stats['wins'] / home_stats['games'] if home_stats['games'] > 0 else 0 away_loss_rate = away_stats['losses'] / away_stats['games'] if away_stats['games'] > 0 else 0 return round((home_win_rate + away_loss_rate) / 2, 3) elif league_avg: return round(league_avg['home_win_rate'], 3) return 0.50
+
+def filter_markets_by_bookmaker(markets): return [m for m in markets if m['bookmaker_key'] in ALLOWED_BOOKMAKERS]
+
+Зареждане на футболните лиги
+
+sports_url = f"https://api.the-odds-api.com/v4/sports/?apiKey={ODDS_API_KEY}" sports_response = requests.get(sports_url) sports = [s for s in sports_response.json() if s['group'] == 'Soccer']
+
+print("Стойностни футболни залози с кеш и филтриран букмейкър:")
+
+for sport in sports: sport_key = sport['key'] print(f"\nЛига: {sport['title']}")
+
+odds_url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
+params = {
+    "regions": "eu",
+    "markets": "h2h,totals",
+    "oddsFormat": "decimal",
+    "dateFormat": "iso",
+    "daysFrom": 0,
+    "daysTo": 3,
+    "apiKey": ODDS_API_KEY
 }
 
-def get_football_odds():
-    url = f"https://api.the-odds-api.com/v4/sports/soccer/odds"
-    params = {
-        "regions": "eu",
-        "markets": "h2h,totals",
-        "oddsFormat": "decimal",
-        "dateFormat": "iso",
-        "apiKey": ODDS_API_KEY
-    }
-    response = requests.get(url, params=params)
-    response.raise_for_status()
-    return response.json()
-
-def get_team_id(team_name, league_id=39, season=2023):
-    url = f"https://v3.football.api-sports.io/teams?league={league_id}&season={season}&search={team_name}"
-    resp = requests.get(url, headers=HEADERS_FOOTBALL)
-    data = resp.json()
-    if data['results'] > 0:
-        return data['response'][0]['team']['id']
-    return None
-
-def get_last_matches(team_id, league_id=39, season=2023, last=5):
-    url = f"https://v3.football.api-sports.io/fixtures?team={team_id}&league={league_id}&season={season}&last={last}"
-    resp = requests.get(url, headers=HEADERS_FOOTBALL)
-    data = resp.json()
-    return data['response']
-
-def get_h2h_matches(team1_id, team2_id, last=5):
-    url = f"https://v3.football.api-sports.io/fixtures?h2h={team1_id}-{team2_id}&last={last}"
-    resp = requests.get(url, headers=HEADERS_FOOTBALL)
-    data = resp.json()
-    return data['response']
-
-def calculate_form_prob(team_id, league_id=39, season=2023):
-    matches = get_last_matches(team_id, league_id, season)
-    if not matches:
-        return 0.33  # При липса на данни - равен шанс
-
-    points = 0
-    total = 0
-    for m in matches:
-        if m['teams']['home']['id'] == team_id:
-            score_for = m['goals']['home']
-            score_against = m['goals']['away']
-        else:
-            score_for = m['goals']['away']
-            score_against = m['goals']['home']
-
-        if score_for > score_against:
-            points += 3
-        elif score_for == score_against:
-            points += 1
-        total += 3
-
-    return points / total if total > 0 else 0.33
-
-def estimate_match_prob(home_id, away_id):
-    home_form = calculate_form_prob(home_id)
-    away_form = calculate_form_prob(away_id)
-    total = home_form + away_form
-    if total == 0:
-        return 0.33, 0.33, 0.33
-    p_home = home_form / total
-    p_away = away_form / total
-    p_draw = 1 - (p_home + p_away)
-    return p_home, p_draw, p_away
-
-# Приложение
 try:
-    odds_data = get_football_odds()
-except Exception as e:
-    st.error(f"Грешка при зареждане на коефициенти: {e}")
-    st.stop()
+    odds_response = requests.get(odds_url, params=params)
+    odds_response.raise_for_status()
+    matches = odds_response.json()
 
-matches = odds_data
-if not matches:
-    st.write("Няма налични мачове.")
-    st.stop()
+    if not matches:
+        print("  Няма активни мачове или пазарите не са налични.")
+        continue
 
-for match in matches[:10]:  # показваме първите 10 мача
-    home = match['home_team']
-    away = match['away_team']
-    commence_time = datetime.fromisoformat(match['commence_time'].replace('Z', '+00:00'))
-    st.write(f"### {home} vs {away} - {commence_time.strftime('%Y-%m-%d %H:%M')}")
+    for match in matches:
+        home = match['home_team']
+        away = match['away_team']
+        start_time = datetime.fromisoformat(match['commence_time'].replace('Z', '+00:00')).strftime('%Y-%m-%d %H:%M')
 
-    # Взимаме ID-тата на отборите
-    league_id = match['sport_key']  # Тук трябва да се мапне към api-football лига - важно да уточним
-    season = 2023
+        markets = filter_markets_by_bookmaker(match.get('bookmakers', []))
+        for market in markets:
+            for outcome in market['markets'][0]['outcomes']:
+                team = outcome['name']
+                odds = outcome['price']
+                implied_prob = round(1 / odds, 3)
 
-    home_id = get_team_id(home, league_id=39, season=season)  # за проба взимаме Висша лига (39)
-    away_id = get_team_id(away, league_id=39, season=season)
+                # Примерни фалшиви статистики (замени с реални при fetch)
+                home_stats = {'wins': 3, 'games': 5, 'losses': 2}
+                away_stats = {'wins': 1, 'games': 5, 'losses': 4}
+                probability = estimate_probability(home_stats, away_stats)
 
-    if home_id and away_id:
-        p_home, p_draw, p_away = estimate_match_prob(home_id, away_id)
-        st.write(f"Вероятности според форма: Домакин {p_home:.2f}, Равенство {p_draw:.2f}, Гост {p_away:.2f}")
-    else:
-        st.write("Няма достатъчно статистика за изчисляване на вероятности.")
+                value = round(probability - implied_prob, 3)
+                if value > 0.05:
+                    print(f"  {home} vs {away} ({start_time})")
+                    print(f"    {team} @ {odds} (стойност: {value}) при {market['bookmaker_key']}")
 
-    # Букмейкърски коефициенти за х2х
-    for bookmaker in match.get('bookmakers', []):
-        st.write(f"Букмейкър: {bookmaker['title']}")
-        for market in bookmaker['markets']:
-            if market['key'] == 'h2h':
-                outcomes = market['outcomes']
-                for outcome in outcomes:
-                    st.write(f" - {outcome['name']}: {outcome['price']}")
+except requests.RequestException as e:
+    print(f"  Грешка при зареждане на мачовете: {e}")
 
-    st.write("---")
