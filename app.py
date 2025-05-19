@@ -3,49 +3,149 @@ import requests
 import json
 import os
 from datetime import datetime
+from time import sleep
 
-# Константи
-ODDS_API_KEY = "2e086a4b6d758dec878ee7b5593405b1"
+# --- Ключове от secrets ---
+ODDS_API_KEY = st.secrets["odds_api_key"]
+API_FOOTBALL_KEY = st.secrets["api_football_key"]
+
 ALLOWED_BOOKMAKERS = ["betfair", "pinnacle", "bet365", "williamhill"]
 CACHE_FILE = "stats_cache.json"
 
-# Зареждане на кеш
+# --- Зареждане кеш ---
 if os.path.exists(CACHE_FILE):
     with open(CACHE_FILE, "r") as f:
         stats_cache = json.load(f)
 else:
     stats_cache = {}
 
-# Запазване на кеша
 def save_cache():
     with open(CACHE_FILE, "w") as f:
         json.dump(stats_cache, f)
 
-# Филтриране на пазарите по букмейкър
-def filter_markets_by_bookmaker(bookmakers):
-    markets = []
-    for bookmaker in bookmakers:
-        if bookmaker.get('key') in ALLOWED_BOOKMAKERS:
-            markets.extend(bookmaker.get('markets', []))
-    return markets
+# --- Функция за кеширане и взимане на данни от API-Football ---
+def get_api_football(endpoint, params=None):
+    base_url = "https://api-football-v1.p.rapidapi.com/v3"
+    headers = {
+        "x-rapidapi-host": "api-football-v1.p.rapidapi.com",
+        "x-rapidapi-key": API_FOOTBALL_KEY
+    }
+    url = f"{base_url}/{endpoint}"
+    key = f"{url}_{json.dumps(params, sort_keys=True)}"
+    if key in stats_cache:
+        return stats_cache[key]
 
-# Изчисление на базова вероятност
-def estimate_probability(odds):
-    if odds <= 1.01:
-        return 0.0
-    return round(1 / odds, 2)
+    response = requests.get(url, headers=headers, params=params)
+    if response.status_code == 200:
+        data = response.json()
+        stats_cache[key] = data
+        save_cache()
+        # Лека пауза за rate limiting
+        sleep(1)
+        return data
+    else:
+        st.warning(f"Грешка при API-Football: {response.status_code} {response.text}")
+        return None
 
-# Проверка за стойностен залог
-def is_value_bet(prob, odds, threshold=0.05):
-    value = prob * odds - 1
-    return value > threshold, round(value, 2)
+# --- Вземане на последни 5 мача (форма) на отбор ---
+def get_team_form(team_name):
+    # Търсене на отбор по име (примерно)
+    data = get_api_football("teams", {"search": team_name})
+    if not data or not data["response"]:
+        return []
+    team_id = data["response"][0]["team"]["id"]
 
-# Старт на Streamlit
-st.title("Детектор на стойностни футболни залози")
+    # Последни 5 мача на този отбор
+    matches_data = get_api_football("fixtures", {"team": team_id, "last": 5})
+    if not matches_data or not matches_data["response"]:
+        return []
+    return matches_data["response"]
 
-st.markdown("---")
-st.subheader("Зареждане на мачове и коефициенти")
+# --- Вземане на head to head между два отбора ---
+def get_h2h(home_team, away_team):
+    # Търсим двата отбора
+    home_data = get_api_football("teams", {"search": home_team})
+    away_data = get_api_football("teams", {"search": away_team})
+    if not home_data or not away_data or not home_data["response"] or not away_data["response"]:
+        return None
 
+    home_id = home_data["response"][0]["team"]["id"]
+    away_id = away_data["response"][0]["team"]["id"]
+
+    h2h_data = get_api_football("fixtures/headtohead", {"h2h": f"{home_id}-{away_id}"})
+    if not h2h_data or not h2h_data["response"]:
+        return None
+    return h2h_data["response"]
+
+# --- Изчисляване на вероятности по прост модел (на база форма и H2H) ---
+def calc_probabilities(home_form, away_form, h2h):
+    # За пример: броим победи, равни и загуби последните 5 мача (формата) + head to head резултати
+    def form_stats(matches, team_name):
+        wins = draws = losses = 0
+        for m in matches:
+            home = m["teams"]["home"]["name"]
+            away = m["teams"]["away"]["name"]
+            goals_home = m["goals"]["home"]
+            goals_away = m["goals"]["away"]
+            if goals_home is None or goals_away is None:
+                continue
+            if team_name == home:
+                if goals_home > goals_away:
+                    wins += 1
+                elif goals_home == goals_away:
+                    draws += 1
+                else:
+                    losses += 1
+            elif team_name == away:
+                if goals_away > goals_home:
+                    wins += 1
+                elif goals_away == goals_home:
+                    draws += 1
+                else:
+                    losses += 1
+        total = wins + draws + losses
+        return wins, draws, losses, total
+
+    home_w, home_d, home_l, home_t = form_stats(home_form, home_form[0]["teams"]["home"]["name"] if home_form else "")
+    away_w, away_d, away_l, away_t = form_stats(away_form, away_form[0]["teams"]["home"]["name"] if away_form else "")
+
+    # H2H
+    h2h_w = h2h_d = h2h_l = 0
+    for match in h2h or []:
+        home_goals = match["goals"]["home"]
+        away_goals = match["goals"]["away"]
+        if home_goals is None or away_goals is None:
+            continue
+        if home_goals > away_goals:
+            h2h_w += 1
+        elif home_goals == away_goals:
+            h2h_d += 1
+        else:
+            h2h_l += 1
+    h2h_t = h2h_w + h2h_d + h2h_l
+
+    # Примерно тежене (50% форма, 50% H2H)
+    total_home = (home_w + 0.5 * home_d) / max(home_t,1)
+    total_away = (away_w + 0.5 * away_d) / max(away_t,1)
+    total_h2h = (h2h_w + 0.5 * h2h_d) / max(h2h_t,1)
+
+    prob_home_win = round(0.5 * total_home + 0.5 * total_h2h, 2)
+    prob_away_win = round(0.5 * total_away + 0.5 * (1 - total_h2h), 2)
+    prob_draw = round(1 - prob_home_win - prob_away_win, 2)
+    if prob_draw < 0: prob_draw = 0.0
+
+    return prob_home_win, prob_draw, prob_away_win
+
+# --- Изчисление на Kelly формула за залог ---
+def kelly_criterion(prob, odds, bankroll=1000):
+    b = odds - 1
+    kelly = (b * prob - (1 - prob)) / b
+    return max(kelly, 0) * bankroll
+
+# --- Основно приложение --- #
+st.title("Детектор на стойностни футболни залози с реална статистика")
+
+st.markdown("### Зареждане на футболни мачове и коефициенти от The Odds API")
 odds_url = f"https://api.the-odds-api.com/v4/sports/soccer/odds"
 params = {
     "regions": "eu",
@@ -71,30 +171,28 @@ try:
             commence = datetime.fromisoformat(match['commence_time'].replace('Z', '+00:00'))
             time_str = commence.strftime('%Y-%m-%d %H:%M')
 
-            st.markdown(f"### {home} vs {away} ({time_str})")
+            st.markdown(f"## {home} vs {away} ({time_str})")
 
             bookmakers = match.get('bookmakers', [])
-            markets = filter_markets_by_bookmaker(bookmakers)
+            # Филтриране букмейкъри
+            markets = []
+            for bookmaker in bookmakers:
+                if bookmaker.get('key') in ALLOWED_BOOKMAKERS:
+                    markets.extend(bookmaker.get('markets', []))
 
             if not markets:
-                st.write("❌ Пропуснат мач – няма налични пазари от избраните букмейкъри.")
+                st.write("❌ Пропуснат мач – няма пазари от избраните букмейкъри.")
                 continue
 
+            # Вземане на статистика и вероятности
+            home_form = get_team_form(home)
+            away_form = get_team_form(away)
+            h2h = get_h2h(home, away)
+
+            prob_home, prob_draw, prob_away = calc_probabilities(home_form, away_form, h2h)
+
+            st.write(f"Вероятности (по модел): Домашен: {prob_home}, Равен: {prob_draw}, Гост: {prob_away}")
+
+            # Показване на стойностни залози за всеки пазар
             for market in markets:
-                if market['key'] not in ['h2h', 'totals']:
-                    continue
-
-                for outcome in market['outcomes']:
-                    name = outcome['name']
-                    odds = outcome['price']
-                    prob = estimate_probability(odds)
-                    value_bet, value_score = is_value_bet(prob, odds)
-
-                    if value_bet:
-                        st.success(f"Стойностен залог: **{market['key']} – {name}** @ {odds} | Вероятност: {prob} | Стойност: {value_score}")
-
-except requests.exceptions.RequestException as e:
-    st.error(f"Грешка при зареждане на мачове: {e}")
-
-# Записване на кешираните заявки
-save_cache()
+                if market['key'] == 'h2
