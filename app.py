@@ -10,12 +10,11 @@ st.title("Всички футболни мачове и коефициенти (
 
 url = "https://api.the-odds-api.com/v4/sports/soccer/odds"
 params = {
-    "regions": "eu",
     "markets": "h2h",
     "oddsFormat": "decimal",
     "dateFormat": "iso",
     "daysFrom": 0,
-    "daysTo": 2,
+    "daysTo": 3,
     "apiKey": ODDS_API_KEY
 }
 
