@@ -1,119 +1,112 @@
 import streamlit as st
 import requests
 from datetime import datetime
-from functools import lru_cache
+import pytz
 
-# Конфигурация
+# Кеширане
+team_form_cache = {}
+h2h_cache = {}
+
+# API ключове
 ODDS_API_KEY = "2e086a4b6d758dec878ee7b5593405b1"
 API_FOOTBALL_KEY = "cb4a5917231d8b20dd6b85ae9d025e6e"
-HEADERS_API_FOOTBALL = {"x-apisports-key": API_FOOTBALL_KEY}
 
-ALLOWED_BOOKMAKERS = ["betfair", "pinnacle", "marathonbet", "unibet_eu"]
+# Позволени букмейкъри
+ALLOWED_BOOKMAKERS = ["bet365", "pinnacle", "unibet", "williamhill"]
 
 st.title("Детектор на стойностни футболни залози")
 st.write("Зареждане на мачове и коефициенти")
 
-# Зареждане на мачове от Odds API
-odds_url = f"https://api.the-odds-api.com/v4/sports/soccer/odds"
+# Филтриране на маркетите само по позволени букмейкъри
+def filter_markets_by_bookmaker(bookmakers):
+    for bookmaker in bookmakers:
+        if bookmaker.get('key') in ALLOWED_BOOKMAKERS:
+            return bookmaker.get('markets', [])
+    return []
+
+# Вземане на форма
+def get_team_form(team_name):
+    if team_name in team_form_cache:
+        return team_form_cache[team_name]
+
+    url = f"https://v3.football.api-sports.io/teams?search={team_name}"
+    headers = {"x-apisports-key": API_FOOTBALL_KEY}
+    response = requests.get(url, headers=headers)
+    data = response.json()
+
+    try:
+        team_id = data['response'][0]['team']['id']
+        form_url = f"https://v3.football.api-sports.io/teams/statistics?team={team_id}&season=2024&league=1"
+        form_response = requests.get(form_url, headers=headers)
+        form_data = form_response.json()
+
+        form_str = form_data.get("response", {}).get("form", "")
+        if form_str:
+            form_score = form_str.count("W") / len(form_str)
+        else:
+            form_score = 0.5
+    except (IndexError, KeyError, TypeError):
+        form_score = 0.5
+
+    team_form_cache[team_name] = form_score
+    return form_score
+
+# Изчисляване на вероятности на база форма и H2H (псевдо)
+def calculate_probabilities(home, away):
+    form_home = get_team_form(home)
+    form_away = get_team_form(away)
+
+    prob_home = round(0.4 + (form_home - form_away) * 0.3, 2)
+    prob_away = round(0.4 + (form_away - form_home) * 0.3, 2)
+    prob_draw = round(1 - prob_home - prob_away, 2)
+
+    return max(min(prob_home, 0.85), 0.05), max(min(prob_draw, 0.85), 0.05), max(min(prob_away, 0.85), 0.05)
+
+# Стойностен залог ли е?
+def is_value_bet(prob, odds):
+    return prob * odds > 1.05
+
+# Заявка за мачове
+url = f"https://api.the-odds-api.com/v4/sports/soccer/odds"
 params = {
     "regions": "eu",
     "markets": "h2h,totals",
     "oddsFormat": "decimal",
     "dateFormat": "iso",
     "daysFrom": 0,
-    "daysTo": 3,
+    "daysTo": 2,
     "apiKey": ODDS_API_KEY
 }
 
 try:
-    response = requests.get(odds_url, params=params)
+    response = requests.get(url, params=params)
     response.raise_for_status()
     matches = response.json()
-
-    if not matches:
-        st.warning("Няма налични мачове.")
-
-    def kelly_criterion(prob, odds, bankroll):
-        edge = (prob * (odds - 1)) - (1 - prob)
-        fraction = edge / (odds - 1) if odds > 1 else 0
-        return max(0, bankroll * fraction)
-
-    def calc_probabilities(home_form, away_form, h2h):
-        prob_home = (home_form + h2h[0]) / 2
-        prob_draw = h2h[1]
-        prob_away = (away_form + h2h[2]) / 2
-        total = prob_home + prob_draw + prob_away
-        return prob_home / total, prob_draw / total, prob_away / total
-
-    @lru_cache(maxsize=1000)
-    def get_team_form(team):
-        url = f"https://v3.football.api-sports.io/teams/statistics?team={team}&season=2024&league=39"
-        r = requests.get(url, headers=HEADERS_API_FOOTBALL)
-        if r.status_code == 200:
-            data = r.json()
-            return data['form'].count("W") / len(data['form']) if data['form'] else 0.5
-        return 0.5
-
-    @lru_cache(maxsize=1000)
-    def get_h2h(home, away):
-        url = f"https://v3.football.api-sports.io/fixtures/headtohead?h2h={home}-{away}"
-        r = requests.get(url, headers=HEADERS_API_FOOTBALL)
-        if r.status_code == 200:
-            matches = r.json().get('response', [])
-            h = sum(1 for m in matches if m['teams']['home']['winner'])
-            d = sum(1 for m in matches if m['teams']['home']['draw'])
-            a = sum(1 for m in matches if m['teams']['away']['winner'])
-            total = h + d + a
-            return (h / total, d / total, a / total) if total else (0.4, 0.2, 0.4)
-        return (0.4, 0.2, 0.4)
-
-    def filter_markets_by_bookmaker(markets):
-        return [m for m in markets if m.get('bookmaker_key') in ALLOWED_BOOKMAKERS]
 
     for match in matches:
         home = match['home_team']
         away = match['away_team']
-        time = datetime.fromisoformat(match['commence_time'].replace("Z", "+00:00"))
-        st.subheader(f"{home} vs {away} ({time.strftime('%Y-%m-%d %H:%M')})")
+        commence = datetime.fromisoformat(match['commence_time'].replace('Z', '+00:00')).astimezone(pytz.timezone("Europe/Sofia"))
+        st.subheader(f"{home} vs {away} ({commence.strftime('%Y-%m-%d %H:%M')})")
 
-        home_form = get_team_form(home)
-        away_form = get_team_form(away)
-        h2h = get_h2h(home, away)
+        markets = filter_markets_by_bookmaker(match.get("bookmakers", []))
+        prob_home, prob_draw, prob_away = calculate_probabilities(home, away)
 
-        prob_home, prob_draw, prob_away = calc_probabilities(home_form, away_form, h2h)
-
-        st.write(f"**Вероятности (по форма и H2H):**")
-        st.write(f"- Победа за {home}: {prob_home * 100:.1f}%")
-        st.write(f"- Равен: {prob_draw * 100:.1f}%")
-        st.write(f"- Победа за {away}: {prob_away * 100:.1f}%")
-
-        markets = filter_markets_by_bookmaker(match.get('bookmakers', []))
         for market in markets:
-            st.subheader(f"{market['key'].upper()} – {market['bookmaker']}")
-            for outcome in market['outcomes']:
-                name = outcome['name']
-                price = outcome['price']
-
-                if market['key'] == 'h2h':
-                    if name == home:
+            if market['key'] == 'h2h':
+                outcomes = market['outcomes']
+                for outcome in outcomes:
+                    team = outcome['name']
+                    odds = outcome['price']
+                    if team == home:
                         prob = prob_home
-                    elif name == away:
+                    elif team == away:
                         prob = prob_away
                     else:
                         prob = prob_draw
-                elif market['key'] == 'totals':
-                    prob = 0.55 if "Over" in name else 0.45
 
-                fair_odds = 1 / prob if prob > 0 else None
-                value = (price - fair_odds) / fair_odds if fair_odds else 0
-
-                if fair_odds:
-                    st.write(f"{name} @ {price:.2f} | Стойност: {value*100:.1f}% | Очакв. вероятност: {prob*100:.1f}%")
-
-                    if value > 0.10:
-                        stake = kelly_criterion(prob, price, bankroll=500)
-                        st.success(f"**СТОЙНОСТЕН ЗАЛОГ:** {name} @ {price:.2f} | Преп. залог: {stake:.2f} лв.")
-
-except requests.RequestException as e:
-    st.error(f"Грешка при зареждане: {e}")
-    
+                    value = round(prob * odds, 2)
+                    if is_value_bet(prob, odds):
+                        st.markdown(f"**Стойностен залог:** {team} при коеф. {odds} (стойност: {value})")
+except Exception as e:
+    st.error(f"Грешка при зареждане на мачове: {e}")
