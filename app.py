@@ -1,7 +1,7 @@
 value_bets_detector.py
 
-import requests from datetime
-import datetime
+import requests
+from datetimeimport datetime
 
 API ключове
 
