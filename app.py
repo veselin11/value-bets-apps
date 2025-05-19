@@ -7,25 +7,95 @@ import pytz
 ODDS_API_KEY = "2e086a4b6d758dec878ee7b5593405b1"
 API_FOOTBALL_KEY = "cb4a5917231d8b20dd6b85ae9d025e6e"
 
-st.title("Стойностни залози чрез сравнение с Pinnacle")
+st.title("Стойностни залози чрез сравнение с Pinnacle + Форма & H2H")
 
-# --- Нашата оценка (примерно базирана на форма) ---
-def get_probabilities(home, away):
-    # Тук може да се подобри с реални данни
-    if home[0] < away[0]:
-        return 0.45, 0.3, 0.25  # Пример: домакин с предимство
-    elif away[0] < home[0]:
-        return 0.25, 0.3, 0.45
-    else:
+# API-Football headers
+FOOTBALL_API_HEADERS = {
+    "X-RapidAPI-Key": API_FOOTBALL_KEY,
+    "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+}
+
+# Намиране на ID на отбор
+def get_team_id(team_name):
+    url = "https://api-football-v1.p.rapidapi.com/v3/teams"
+    params = {"search": team_name}
+    res = requests.get(url, headers=FOOTBALL_API_HEADERS, params=params)
+    teams = res.json().get("response", [])
+    for team in teams:
+        if team["team"]["name"].lower() == team_name.lower():
+            return team["team"]["id"]
+    return None
+
+# Последни 5 мача на отбор
+def get_last_matches(team_id):
+    url = "https://api-football-v1.p.rapidapi.com/v3/fixtures"
+    params = {"team": team_id, "season": 2024, "last": 5}
+    res = requests.get(url, headers=FOOTBALL_API_HEADERS, params=params)
+    return res.json().get("response", [])
+
+# Последни директни срещи
+def get_h2h(home_id, away_id):
+    url = "https://api-football-v1.p.rapidapi.com/v3/fixtures/headtohead"
+    params = {"h2h": f"{home_id}-{away_id}", "last": 3}
+    res = requests.get(url, headers=FOOTBALL_API_HEADERS, params=params)
+    return res.json().get("response", [])
+
+# Вероятности от статистика
+def calculate_probabilities_from_stats(home_team, away_team):
+    try:
+        home_id = get_team_id(home_team)
+        away_id = get_team_id(away_team)
+        if not home_id or not away_id:
+            return 0.33, 0.34, 0.33
+
+        home_matches = get_last_matches(home_id)
+        away_matches = get_last_matches(away_id)
+        h2h_matches = get_h2h(home_id, away_id)
+
+        def points(matches, team_id):
+            score = 0
+            for m in matches:
+                res = m["teams"]
+                goals = m["goals"]
+                if res["home"]["id"] == team_id:
+                    if goals["home"] > goals["away"]: score += 3
+                    elif goals["home"] == goals["away"]: score += 1
+                else:
+                    if goals["away"] > goals["home"]: score += 3
+                    elif goals["away"] == goals["home"]: score += 1
+            return score
+
+        home_pts = points(home_matches, home_id)
+        away_pts = points(away_matches, away_id)
+
+        h2h_score = 0
+        for m in h2h_matches:
+            res = m["teams"]
+            goals = m["goals"]
+            if goals["home"] == goals["away"]:
+                h2h_score += 0.5
+            elif (res["home"]["id"] == home_id and goals["home"] > goals["away"]) or \
+                 (res["away"]["id"] == home_id and goals["away"] > goals["home"]):
+                h2h_score += 1
+            else:
+                h2h_score -= 1
+
+        total = home_pts + away_pts + abs(h2h_score) + 0.01
+        prob_home = (home_pts + h2h_score) / total
+        prob_away = away_pts / total
+        prob_draw = 1 - prob_home - prob_away
+        return round(prob_home, 2), round(prob_draw, 2), round(prob_away, 2)
+
+    except Exception as e:
+        st.warning(f"Грешка в статистиката за {home_team} vs {away_team}: {e}")
         return 0.33, 0.34, 0.33
 
-# --- Извличане на коефициенти ---
+# Сравнение с Pinnacle
 def get_best_odds_vs_pinnacle(bookmakers, market_key):
     pinnacle_odds = {}
     best_diff = -1
     best_bookmaker = None
 
-    # 1. Намери Pinnacle
     for bm in bookmakers:
         if bm["key"] == "pinnacle":
             for m in bm["markets"]:
@@ -37,7 +107,6 @@ def get_best_odds_vs_pinnacle(bookmakers, market_key):
     if not pinnacle_odds:
         return None
 
-    # 2. Намери най-добра оферта от другите
     for bm in bookmakers:
         if bm["key"] == "pinnacle":
             continue
@@ -59,7 +128,7 @@ def get_best_odds_vs_pinnacle(bookmakers, market_key):
                             }
     return best_bookmaker if best_bookmaker and best_bookmaker["diff"] >= 0.2 else None
 
-# --- Извличане на мачове ---
+# Извличане на мачове
 url = f"https://api.the-odds-api.com/v4/sports/soccer/odds"
 params = {
     "regions": "eu",
@@ -84,7 +153,7 @@ try:
 
         best = get_best_odds_vs_pinnacle(match["bookmakers"], "h2h")
         if best:
-            prob_home, prob_draw, prob_away = get_probabilities(home, away)
+            prob_home, prob_draw, prob_away = calculate_probabilities_from_stats(home, away)
 
             if best["team"] == home:
                 prob = prob_home
