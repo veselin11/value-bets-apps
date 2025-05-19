@@ -1,4 +1,4 @@
-import streamlit as st
+                import streamlit as st
 import requests
 from datetime import datetime
 import pytz
@@ -9,13 +9,27 @@ API_FOOTBALL_KEY = "cb4a5917231d8b20dd6b85ae9d025e6e"
 
 st.title("Стойностни залози чрез сравнение с Pinnacle + Форма & H2H")
 
+# Инициализация на session state за презареждане
+if "reload" not in st.session_state:
+    st.session_state.reload = False
+
+# Бутон за презареждане
+if st.button("Презареди прогнози"):
+    st.session_state.reload = True
+
+# Ако флагът е True, ресетваме и презареждаме приложението
+if st.session_state.reload:
+    st.session_state.reload = False
+    st.experimental_rerun()
+
+# --- Останалата част от кода ти тук ---
+
 # API-Football headers
 FOOTBALL_API_HEADERS = {
     "X-RapidAPI-Key": API_FOOTBALL_KEY,
     "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
 }
 
-@st.cache_data(ttl=3600)
 def get_team_id(team_name):
     url = "https://api-football-v1.p.rapidapi.com/v3/teams"
     params = {"search": team_name}
@@ -26,14 +40,12 @@ def get_team_id(team_name):
             return team["team"]["id"]
     return None
 
-@st.cache_data(ttl=3600)
 def get_last_matches(team_id):
     url = "https://api-football-v1.p.rapidapi.com/v3/fixtures"
     params = {"team": team_id, "season": 2024, "last": 5}
     res = requests.get(url, headers=FOOTBALL_API_HEADERS, params=params)
     return res.json().get("response", [])
 
-@st.cache_data(ttl=3600)
 def get_h2h(home_id, away_id):
     url = "https://api-football-v1.p.rapidapi.com/v3/fixtures/headtohead"
     params = {"h2h": f"{home_id}-{away_id}", "last": 3}
@@ -83,12 +95,6 @@ def calculate_probabilities_from_stats(home_team, away_team):
         prob_home = (home_pts + h2h_score) / total
         prob_away = away_pts / total
         prob_draw = 1 - prob_home - prob_away
-
-        # Ограничаваме вероятностите да са в [0,1]
-        prob_home = max(min(prob_home,1),0)
-        prob_draw = max(min(prob_draw,1),0)
-        prob_away = max(min(prob_away,1),0)
-
         return round(prob_home, 2), round(prob_draw, 2), round(prob_away, 2)
 
     except Exception as e:
@@ -132,11 +138,6 @@ def get_best_odds_vs_pinnacle(bookmakers, market_key):
                             }
     return best_bookmaker if best_bookmaker and best_bookmaker["diff"] >= 0.2 else None
 
-min_value = st.slider("Минимална стойност на залог (гибноб)", 1.0, 2.0, 1.2, 0.05)
-
-if st.button("Презареди прогнози"):
-    st.experimental_rerun()
-
 url = f"https://api.the-odds-api.com/v4/sports/soccer/odds"
 params = {
     "regions": "eu",
@@ -171,20 +172,19 @@ try:
                 prob = prob_draw
 
             value = round(prob * best["price"], 2)
-            color = "green" if value > min_value else "black"
+            color = "green" if value > 1.2 else "white"
 
-            if value >= min_value:
-                st.markdown(f"### {home} vs {away} ({time.strftime('%Y-%m-%d %H:%M')})")
-                st.markdown(
-                    f"<span style='color:{color}'>"
-                    f"{best['team']} при {best['bookmaker']}: {best['price']} | Pinnacle: {best['pinnacle']} | "
-                    f"Разлика: +{best['diff']}<br>"
-                    f"→ Вероятност: {prob:.2f}, Стойност: {value:.2f}"
-                    f" → <strong>Стойностен залог!</strong>"
-                    f"</span>",
-                    unsafe_allow_html=True
-                )
-                shown += 1
+            st.markdown(f"### {home} vs {away} ({time.strftime('%Y-%m-%d %H:%M')})")
+            st.markdown(
+                f"<span style='color:{color}'>"
+                f"{best['team']} при {best['bookmaker']}: {best['price']} | Pinnacle: {best['pinnacle']} | "
+                f"Разлика: +{best['diff']}<br>"
+                f"→ Вероятност: {prob:.2f}, Стойност: {value:.2f}"
+                f"{' → <strong>Стойностен залог!</strong>' if value > 1.2 else ''}"
+                f"</span>",
+                unsafe_allow_html=True
+            )
+            shown += 1
 
     st.success(f"Общо стойностни предложения: {shown}")
 
