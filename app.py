@@ -45,7 +45,7 @@ try:
             sport_title = sport['title']
             st.write(f"Лига: {sport_title}")
 
-            matches = get_matches(sport_key, "h2h,totals,btts")
+            matches = get_matches(sport_key, "h2h,totals")
             if not matches:
                 st.write("  Няма мачове или грешка при зареждане.")
                 continue
