@@ -1,105 +1,100 @@
+import streamlit as st
 import requests
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 
+# Константи
 ODDS_API_KEY = "2e086a4b6d758dec878ee7b5593405b1"
-
-# Ограничени букмейкъри
-ALLOWED_BOOKMAKERS = ["bet365", "pinnacle", "unibet"]
-
-# Кеширане
+ALLOWED_BOOKMAKERS = ["betfair", "pinnacle", "bet365", "williamhill"]
 CACHE_FILE = "stats_cache.json"
 
-def load_cache(filename):
-    if os.path.exists(filename):
-        with open(filename, 'r') as f:
-            return json.load(f)
-    return {}
+# Зареждане на кеш
+if os.path.exists(CACHE_FILE):
+    with open(CACHE_FILE, "r") as f:
+        stats_cache = json.load(f)
+else:
+    stats_cache = {}
 
-def save_cache(filename, data):
-    with open(filename, 'w') as f:
-        json.dump(data, f)
+# Запазване на кеша
+def save_cache():
+    with open(CACHE_FILE, "w") as f:
+        json.dump(stats_cache, f)
 
-def get_cached_or_fetch(key, fetch_function):
-    cache = load_cache(CACHE_FILE)
-    now = datetime.utcnow()
+# Филтриране на пазарите по букмейкър
+def filter_markets_by_bookmaker(bookmakers):
+    markets = []
+    for bookmaker in bookmakers:
+        if bookmaker.get('key') in ALLOWED_BOOKMAKERS:
+            markets.extend(bookmaker.get('markets', []))
+    return markets
 
-    if key in cache:
-        cached_time = datetime.fromisoformat(cache[key]['timestamp'])
-        if now - cached_time < timedelta(hours=6):
-            return cache[key]['data']
+# Изчисление на базова вероятност
+def estimate_probability(odds):
+    if odds <= 1.01:
+        return 0.0
+    return round(1 / odds, 2)
 
-    data = fetch_function()
-    cache[key] = {'timestamp': now.isoformat(), 'data': data}
-    save_cache(CACHE_FILE, cache)
-    return data
+# Проверка за стойностен залог
+def is_value_bet(prob, odds, threshold=0.05):
+    value = prob * odds - 1
+    return value > threshold, round(value, 2)
 
-def estimate_probability(home_stats, away_stats, league_avg=None):
-    if home_stats and away_stats:
-        home_win_rate = home_stats['wins'] / home_stats['games'] if home_stats['games'] > 0 else 0
-        away_loss_rate = away_stats['losses'] / away_stats['games'] if away_stats['games'] > 0 else 0
-        return round((home_win_rate + away_loss_rate) / 2, 3)
-    elif league_avg:
-        return round(league_avg['home_win_rate'], 3)
-    return 0.50
+# Старт на Streamlit
+st.title("Детектор на стойностни футболни залози")
 
-def filter_markets_by_bookmaker(markets):
-    return [m for m in markets if m['bookmaker_key'] in ALLOWED_BOOKMAKERS]
+st.markdown("---")
+st.subheader("Зареждане на мачове и коефициенти")
 
-# Зареждане на футболните лиги
-sports_url = f"https://api.the-odds-api.com/v4/sports/?apiKey={ODDS_API_KEY}"
-sports_response = requests.get(sports_url)
-sports = [s for s in sports_response.json() if s['group'] == 'Soccer']
+odds_url = f"https://api.the-odds-api.com/v4/sports/soccer/odds"
+params = {
+    "regions": "eu",
+    "markets": "h2h,totals",
+    "oddsFormat": "decimal",
+    "dateFormat": "iso",
+    "daysFrom": 0,
+    "daysTo": 3,
+    "apiKey": ODDS_API_KEY
+}
 
-print("Стойностни футболни залози с кеш и филтриран букмейкър:")
+try:
+    response = requests.get(odds_url, params=params)
+    response.raise_for_status()
+    matches = response.json()
 
-for sport in sports:
-    sport_key = sport['key']
-    print(f"\nЛига: {sport['title']}")
-
-    odds_url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
-    params = {
-        "regions": "eu",
-        "markets": "h2h,totals",
-        "oddsFormat": "decimal",
-        "dateFormat": "iso",
-        "daysFrom": 0,
-        "daysTo": 3,
-        "apiKey": ODDS_API_KEY
-    }
-
-    try:
-        odds_response = requests.get(odds_url, params=params)
-        odds_response.raise_for_status()
-        matches = odds_response.json()
-
-        if not matches:
-            print("  Няма активни мачове или пазарите не са налични.")
-            continue
-
+    if not matches:
+        st.warning("Няма намерени мачове или няма налични пазари.")
+    else:
         for match in matches:
             home = match['home_team']
             away = match['away_team']
-            start_time = datetime.fromisoformat(match['commence_time'].replace('Z', '+00:00')).strftime('%Y-%m-%d %H:%M')
+            commence = datetime.fromisoformat(match['commence_time'].replace('Z', '+00:00'))
+            time_str = commence.strftime('%Y-%m-%d %H:%M')
 
-            markets = filter_markets_by_bookmaker(match.get('bookmakers', []))
+            st.markdown(f"### {home} vs {away} ({time_str})")
+
+            bookmakers = match.get('bookmakers', [])
+            markets = filter_markets_by_bookmaker(bookmakers)
+
+            if not markets:
+                st.write("❌ Пропуснат мач – няма налични пазари от избраните букмейкъри.")
+                continue
+
             for market in markets:
-                for outcome in market['markets'][0]['outcomes']:
-                    team = outcome['name']
+                if market['key'] not in ['h2h', 'totals']:
+                    continue
+
+                for outcome in market['outcomes']:
+                    name = outcome['name']
                     odds = outcome['price']
-                    implied_prob = round(1 / odds, 3)
+                    prob = estimate_probability(odds)
+                    value_bet, value_score = is_value_bet(prob, odds)
 
-                    # Примерни фалшиви статистики (замени с реални при fetch)
-                    home_stats = {'wins': 3, 'games': 5, 'losses': 2}
-                    away_stats = {'wins': 1, 'games': 5, 'losses': 4}
-                    probability = estimate_probability(home_stats, away_stats)
+                    if value_bet:
+                        st.success(f"Стойностен залог: **{market['key']} – {name}** @ {odds} | Вероятност: {prob} | Стойност: {value_score}")
 
-                    value = round(probability - implied_prob, 3)
-                    if value > 0.05:
-                        print(f"  {home} vs {away} ({start_time})")
-                        print(f"    {team} @ {odds} (стойност: {value}) при {market['bookmaker_key']}")
+except requests.exceptions.RequestException as e:
+    st.error(f"Грешка при зареждане на мачове: {e}")
 
-    except requests.RequestException as e:
-        print(f"  Грешка при зареждане на мачовете: {e}")
-        
+# Записване на кешираните заявки
+save_cache()
