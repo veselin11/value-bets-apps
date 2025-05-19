@@ -9,27 +9,24 @@ API_FOOTBALL_KEY = "cb4a5917231d8b20dd6b85ae9d025e6e"
 
 st.title("Стойностни залози чрез сравнение с Pinnacle + Форма & H2H")
 
-# Инициализация на session state за презареждане
-if "reload" not in st.session_state:
-    st.session_state.reload = False
-
-# Бутон за презареждане
-if st.button("Презареди прогнози"):
-    st.session_state.reload = True
-
-# Ако флагът е True, ресетваме и презареждаме приложението
-if st.session_state.reload:
-    st.session_state.reload = False
-    st.experimental_rerun()
-
-# --- Останалата част от кода ти тук ---
-
 # API-Football headers
 FOOTBALL_API_HEADERS = {
     "X-RapidAPI-Key": API_FOOTBALL_KEY,
     "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
 }
 
+# Сесийно състояние за бутон презареждане
+if "reload" not in st.session_state:
+    st.session_state.reload = False
+
+if st.button("Презареди прогнози"):
+    st.session_state.reload = True
+
+if st.session_state.reload:
+    st.session_state.reload = False
+    st.experimental_rerun()
+
+# Намиране на ID на отбор
 def get_team_id(team_name):
     url = "https://api-football-v1.p.rapidapi.com/v3/teams"
     params = {"search": team_name}
@@ -40,18 +37,21 @@ def get_team_id(team_name):
             return team["team"]["id"]
     return None
 
+# Последни 5 мача на отбор
 def get_last_matches(team_id):
     url = "https://api-football-v1.p.rapidapi.com/v3/fixtures"
     params = {"team": team_id, "season": 2024, "last": 5}
     res = requests.get(url, headers=FOOTBALL_API_HEADERS, params=params)
     return res.json().get("response", [])
 
+# Последни директни срещи
 def get_h2h(home_id, away_id):
     url = "https://api-football-v1.p.rapidapi.com/v3/fixtures/headtohead"
     params = {"h2h": f"{home_id}-{away_id}", "last": 3}
     res = requests.get(url, headers=FOOTBALL_API_HEADERS, params=params)
     return res.json().get("response", [])
 
+# Вероятности от статистика
 def calculate_probabilities_from_stats(home_team, away_team):
     try:
         home_id = get_team_id(home_team)
@@ -101,6 +101,7 @@ def calculate_probabilities_from_stats(home_team, away_team):
         st.warning(f"Грешка в статистиката за {home_team} vs {away_team}: {e}")
         return 0.33, 0.34, 0.33
 
+# Сравнение с Pinnacle
 def get_best_odds_vs_pinnacle(bookmakers, market_key):
     pinnacle_odds = {}
     best_diff = -1
@@ -138,6 +139,7 @@ def get_best_odds_vs_pinnacle(bookmakers, market_key):
                             }
     return best_bookmaker if best_bookmaker and best_bookmaker["diff"] >= 0.2 else None
 
+# Извличане на мачове
 url = f"https://api.the-odds-api.com/v4/sports/soccer/odds"
 params = {
     "regions": "eu",
@@ -172,7 +174,7 @@ try:
                 prob = prob_draw
 
             value = round(prob * best["price"], 2)
-            color = "green" if value > 1.2 else "white"
+            color = "green" if value > 1.2 else "black"
 
             st.markdown(f"### {home} vs {away} ({time.strftime('%Y-%m-%d %H:%M')})")
             st.markdown(
