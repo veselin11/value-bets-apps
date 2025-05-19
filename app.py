@@ -3,10 +3,8 @@ import requests
 from datetime import datetime
 import pytz
 
-# Кеширане
 team_form_cache = {}
 
-# API ключове
 ODDS_API_KEY = "2e086a4b6d758dec878ee7b5593405b1"
 API_FOOTBALL_KEY = "cb4a5917231d8b20dd6b85ae9d025e6e"
 
@@ -57,33 +55,30 @@ try:
     matches = response.json()
     st.write(f"Общо заредени мачове: {len(matches)}")
 
+    all_bets = []
+
     for match in matches:
         home = match["home_team"]
         away = match["away_team"]
         commence = datetime.fromisoformat(match['commence_time'].replace('Z', '+00:00')).astimezone(pytz.timezone("Europe/Sofia"))
-        st.subheader(f"{home} vs {away} ({commence.strftime('%Y-%m-%d %H:%M')})")
 
         bookmakers = match.get("bookmakers", [])
         pinnacle_market = next((b for b in bookmakers if b['key'] == PRIMARY_BOOKMAKER), None)
-
         if not pinnacle_market:
-            st.text("Няма данни от Pinnacle.")
             continue
 
-        # Коефициенти на Pinnacle
         pin_odds = {o['name']: o['price'] for o in pinnacle_market['markets'][0]['outcomes']}
         prob_home, prob_draw, prob_away = calculate_probabilities(home, away)
 
         for bookmaker in bookmakers:
             if bookmaker['key'] == PRIMARY_BOOKMAKER:
-                continue  # Прескачаме самия Pinnacle
+                continue
 
             market = bookmaker['markets'][0]
             for outcome in market['outcomes']:
                 team = outcome['name']
                 odds = outcome['price']
                 pin_price = pin_odds.get(team)
-
                 if pin_price and odds > pin_price:
                     diff = round(odds - pin_price, 2)
                     if team == home:
@@ -94,9 +89,31 @@ try:
                         prob = prob_draw
                     value = round(prob * odds, 2)
 
-                    st.markdown(f"- **{team}** при **{bookmaker['key']}**: {odds} | Pinnacle: {pin_price} | Разлика: **+{diff}**")
-                    st.markdown(f"  → Вероятност: {prob}, Стойност: {value}")
-                    if is_value_bet(prob, odds):
-                        st.markdown(f"  **→ Стойностен залог!**")
+                    all_bets.append({
+                        "match": f"{home} vs {away}",
+                        "start": commence.strftime('%Y-%m-%d %H:%M'),
+                        "bookmaker": bookmaker['key'],
+                        "team": team,
+                        "odds": odds,
+                        "pinnacle": pin_price,
+                        "diff": diff,
+                        "prob": prob,
+                        "value": value
+                    })
+
+    sorted_bets = sorted(all_bets, key=lambda x: x["value"], reverse=True)
+
+    for bet in sorted_bets:
+        st.subheader(f"{bet['match']} ({bet['start']})")
+        st.markdown(f"- **{bet['team']}** при **{bet['bookmaker']}**: {bet['odds']} | Pinnacle: {bet['pinnacle']} | Разлика: **+{bet['diff']}**")
+        st.markdown(f"  → Вероятност: {bet['prob']}, Стойност: {bet['value']}")
+
+        if bet['value'] >= MIN_VALUE_THRESHOLD:
+            st.markdown(f"<span style='color:green'><b>→ Стойностен залог!</b></span>", unsafe_allow_html=True)
+        elif bet['value'] >= 1.0:
+            st.markdown(f"<span style='color:gray'>→ Средна стойност</span>", unsafe_allow_html=True)
+        else:
+            st.markdown(f"<span style='color:red'>→ Ниска стойност</span>", unsafe_allow_html=True)
+
 except Exception as e:
     st.error(f"Грешка при зареждане: {e}")
