@@ -1,3 +1,4 @@
+import streamlit as st
 import requests
 
 API_KEY = "2e086a4b6d758dec878ee7b5593405b1"
@@ -5,15 +6,21 @@ API_KEY = "2e086a4b6d758dec878ee7b5593405b1"
 def get_soccer_sports():
     url = "https://api.the-odds-api.com/v4/sports"
     params = {"apiKey": API_KEY}
-    response = requests.get(url, params=params)
-    response.raise_for_status()
-    sports = response.json()
+    try:
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        sports = response.json()
+        soccer_sports = [sport for sport in sports if "soccer" in sport['key']]
+        return soccer_sports
+    except Exception as e:
+        st.error(f"Грешка при зареждане: {e}")
+        return []
 
-    soccer_sports = [sport for sport in sports if "soccer" in sport['key']]
-    return soccer_sports
+st.title("Футболни спортове и лиги")
 
-if __name__ == "__main__":
-    soccer_sports = get_soccer_sports()
-    print("Налични футболни спортове/лиги в The Odds API:")
+soccer_sports = get_soccer_sports()
+if soccer_sports:
     for sport in soccer_sports:
-        print(f"{sport['key']} - {sport['title']}")
+        st.write(f"{sport['key']} - {sport['title']}")
+else:
+    st.info("Няма намерени футболни спортове.")
