@@ -1,6 +1,6 @@
 import streamlit as st
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 import pytz
 
 # Кеширане
@@ -13,18 +13,17 @@ API_FOOTBALL_KEY = "cb4a5917231d8b20dd6b85ae9d025e6e"
 # Позволени букмейкъри
 ALLOWED_BOOKMAKERS = ["bet365", "pinnacle", "unibet", "williamhill"]
 
-# Заглавие
 st.title("Детектор на стойностни футболни залози")
 st.write("Зареждане на мачове и коефициенти...")
 
-# Филтриране на маркетите по позволени букмейкъри
+# Филтриране на маркетите само по позволени букмейкъри
 def filter_markets_by_bookmaker(bookmakers):
     for bookmaker in bookmakers:
         if bookmaker.get('key') in ALLOWED_BOOKMAKERS:
             return bookmaker.get('markets', [])
     return []
 
-# Вземане на форма от API-Football
+# Вземане на форма на отбор
 def get_team_form(team_name):
     if team_name in team_form_cache:
         return team_form_cache[team_name]
@@ -39,8 +38,8 @@ def get_team_form(team_name):
         form_url = f"https://v3.football.api-sports.io/teams/statistics?team={team_id}&season=2024&league=1"
         form_response = requests.get(form_url, headers=headers)
         form_data = form_response.json()
-
         form_str = form_data.get("response", {}).get("form", "")
+
         form_score = form_str.count("W") / len(form_str) if form_str else 0.5
     except (IndexError, KeyError, TypeError):
         form_score = 0.5
@@ -48,7 +47,7 @@ def get_team_form(team_name):
     team_form_cache[team_name] = form_score
     return form_score
 
-# Изчисляване на вероятности на база форма
+# Изчисляване на вероятности
 def calculate_probabilities(home, away):
     form_home = get_team_form(home)
     form_away = get_team_form(away)
@@ -59,15 +58,15 @@ def calculate_probabilities(home, away):
 
     return max(min(prob_home, 0.85), 0.05), max(min(prob_draw, 0.85), 0.05), max(min(prob_away, 0.85), 0.05)
 
-# Стойностен залог ли е?
+# Стойностен залог
 def is_value_bet(prob, odds):
     return prob * odds > 1.05
 
-# Зареждане на мачове от Odds API
+# Заявка за мачове
 url = "https://api.the-odds-api.com/v4/sports/soccer/odds"
 params = {
     "regions": "eu",
-    "markets": "h2h,totals,btts",
+    "markets": "h2h,totals",
     "oddsFormat": "decimal",
     "apiKey": ODDS_API_KEY
 }
@@ -77,19 +76,10 @@ try:
     response.raise_for_status()
     matches = response.json()
 
-    # Днешна и утрешна дата
-    now = datetime.now(pytz.timezone("Europe/Sofia"))
-    tomorrow = now + timedelta(days=1)
-
-    # Филтрираме само мачове в интервала
     for match in matches:
-        commence = datetime.fromisoformat(match['commence_time'].replace('Z', '+00:00')).astimezone(pytz.timezone("Europe/Sofia"))
-        if not (now.date() <= commence.date() <= tomorrow.date()):
-            continue
-
         home = match['home_team']
         away = match['away_team']
-
+        commence = datetime.fromisoformat(match['commence_time'].replace('Z', '+00:00')).astimezone(pytz.timezone("Europe/Sofia"))
         st.subheader(f"{home} vs {away} ({commence.strftime('%Y-%m-%d %H:%M')})")
 
         markets = filter_markets_by_bookmaker(match.get("bookmakers", []))
@@ -106,10 +96,19 @@ try:
                         prob = prob_away
                     else:
                         prob = prob_draw
-
                     value = round(prob * odds, 2)
                     if is_value_bet(prob, odds):
                         st.markdown(f"**Стойностен залог (1X2):** {team} при {odds} (стойност: {value})")
+
+            elif market['key'] == 'totals':
+                for outcome in market['outcomes']:
+                    line = outcome.get('point')
+                    odds = outcome.get('price')
+                    label = outcome.get('name')  # Over/Under
+                    if isinstance(line, (int, float)) and isinstance(odds, (int, float)):
+                        implied_prob = 1 / odds
+                        if is_value_bet(implied_prob, odds):
+                            st.markdown(f"**Стойностен залог (Голове):** {label} {line} при {odds} (стойност: {round(implied_prob * odds, 2)})")
 
 except Exception as e:
     st.error(f"Грешка при зареждане: {e}")
