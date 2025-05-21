@@ -1,104 +1,138 @@
 import streamlit as st
 import requests
-import datetime
+import pandas as pd
+import numpy as np
+from scipy.stats import poisson
+import joblib
 
-# Конфигурация
-API_FOOTBALL_KEY = "e004e3601abd4b108a653f9f3a8c5ede"
-API_ODDS_KEY = "2e086a4b6d758dec878ee7b5593405b1"
-BANKROLL = 500
-VALUE_THRESHOLD = 0.03  # 3%
-BET_SIZE = 0.05  # 5%
+# ================== КОНФИГУРАЦИЯ ================== #
+FOOTBALL_DATA_API_KEY = st.secrets["FOOTBALL_DATA_API_KEY"]
+ODDS_API_KEY = st.secrets["ODDS_API_KEY"]
+SPORT = "soccer_epl"
 
-st.title("Стойностни футболни залози (1X2) с реална статистика")
-
-today = datetime.datetime.utcnow().date()
-
-# HEADERS за API-Football
-headers = {
-    "x-apisports-key": API_FOOTBALL_KEY
+TEAM_ID_MAPPING = {
+    "Manchester City": 65,
+    "AFC Bournemouth": 1044,
+    "Liverpool": 64,
+    "Everton": 62,
+    "Arsenal": 57,
+    "Tottenham Hotspur": 73,
+    # ... добавете останалите отбори
 }
 
-# Зареждаме мачове за днес от API-Football
-with st.spinner("Зареждане на мачове..."):
-    fixtures_url = f"https://v3.football.api-sports.io/fixtures?date={today}&timezone=Europe/Sofia"
-    response = requests.get(fixtures_url, headers=headers)
-    fixtures = response.json().get("response", [])
-
-matches = []
-for match in fixtures:
+@st.cache_data(ttl=3600)
+def get_live_odds():
     try:
-        team_home = match['teams']['home']['name']
-        team_away = match['teams']['away']['name']
-        match_id = match['fixture']['id']
-        league = match['league']['name']
-        country = match['league']['country']
-
-        # Последни 5 мача на домакина
-        url_home = f"https://v3.football.api-sports.io/teams?id={match['teams']['home']['id']}&last=5"
-        home_form = []
-
-        # Последни 5 мача на госта
-        url_away = f"https://v3.football.api-sports.io/teams?id={match['teams']['away']['id']}&last=5"
-        away_form = []
-
-        # Временно симулираме форма: 3 победи за домакин, 1 равен, 1 загуба
-        home_form = [1, 1, 1, 0, 0.5]
-        away_form = [0, 0.5, 0, 1, 0]
-
-        prob_home = sum(home_form) / 5
-        prob_away = sum(away_form) / 5
-        prob_draw = 1 - (prob_home + prob_away)
-        prob_draw = max(0.05, min(prob_draw, 0.4))  # ограничаваме в реалистични граници
-
-        # Зареждане на реални коефициенти от The Odds API
-        odds_url = f"https://api.the-odds-api.com/v4/sports/soccer_epl/odds?regions=eu&markets=h2h&apiKey={API_ODDS_KEY}"
-        odds_data = requests.get(odds_url).json()
-
-        odds_home = 2.50
-        odds_draw = 3.20
-        odds_away = 2.90
-
-        # Стойност на всяка опция
-        value_home = (prob_home * odds_home) - 1
-        value_draw = (prob_draw * odds_draw) - 1
-        value_away = (prob_away * odds_away) - 1
-
-        best_value = max(value_home, value_draw, value_away)
-        if best_value > VALUE_THRESHOLD:
-            if best_value == value_home:
-                bet = "1"
-                odd = odds_home
-                probability = prob_home
-            elif best_value == value_draw:
-                bet = "X"
-                odd = odds_draw
-                probability = prob_draw
-            else:
-                bet = "2"
-                odd = odds_away
-                probability = prob_away
-
-            stake = round((BANKROLL * BET_SIZE) * best_value, 2)
-            matches.append({
-                "Мач": f"{team_home} vs {team_away}",
-                "Залог": bet,
-                "Коефициент": round(odd, 2),
-                "Вероятност": f"{round(probability * 100, 1)}%",
-                "Стойност": f"{round(best_value * 100, 2)}%",
-                "Сума": f"{stake:.2f} лв"
-            })
+        response = requests.get(
+            f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds",
+            params={
+                "apiKey": ODDS_API_KEY,
+                "regions": "eu",
+                "markets": "h2h",
+                "oddsFormat": "decimal"
+            }
+        )
+        response.raise_for_status()
+        return response.json()
     except Exception as e:
-        continue
+        st.error(f"Грешка при взимане на коефициенти: {str(e)}")
+        return []
 
-# Резултати
-st.subheader(f"Намерени стойностни залози: {len(matches)}")
+@st.cache_data(ttl=3600)
+def get_team_stats(team_name):
+    team_id = TEAM_ID_MAPPING.get(team_name)
+    if not team_id:
+        st.warning(f"Не е намерен ID за отбор: {team_name}")
+        return None
+    
+    try:
+        response = requests.get(
+            f"https://api.football-data.org/v4/teams/{team_id}/matches",
+            headers={"X-Auth-Token": FOOTBALL_DATA_API_KEY},
+            params={"status": "FINISHED", "limit": 5}
+        )
+        response.raise_for_status()
+        data = response.json()
+        if "matches" not in data or len(data["matches"]) == 0:
+            st.warning(f"Няма завършени мачове за {team_name}")
+            return None
+        return data["matches"]
+    except Exception as e:
+        st.error(f"Грешка при взимане на статистики за {team_name}: {str(e)}")
+        return None
 
-if matches:
-    for m in matches:
-        st.write(f"**{m['Мач']}**")
-        st.markdown(f"- Залог: **{m['Залог']}** при коефициент **{m['Коефициент']}**")
-        st.markdown(f"- Вероятност: {m['Вероятност']} | Стойност: {m['Стойност']}")
-        st.markdown(f"- Препоръчителна сума за залог: **{m['Сума']}**")
-        st.markdown("---")
-else:
-    st.warning("Няма стойностни залози в момента.")
+def calculate_poisson_probabilities(home_avg, away_avg):
+    home_win, draw, away_win = 0, 0, 0
+    for i in range(6):
+        for j in range(6):
+            p = poisson.pmf(i, home_avg) * poisson.pmf(j, away_avg)
+            if i > j: home_win += p
+            elif i == j: draw += p
+            else: away_win += p
+    return home_win, draw, away_win
+
+def calculate_value_bets(probabilities, odds):
+    value = {}
+    for outcome in ['home', 'draw', 'away']:
+        if odds.get(outcome) and odds[outcome] > 0:
+            implied_prob = 1 / odds[outcome]
+            value[outcome] = probabilities[outcome] - implied_prob
+        else:
+            value[outcome] = None  # няма валиден коефициент
+    return value
+
+def main():
+    st.title("🔮 Advanced Bet Analyzer")
+
+    matches = get_live_odds()
+    if not matches:
+        st.warning("Няма налични мачове в момента")
+        return
+
+    selected_match = st.selectbox(
+        "Избери мач за анализ:",
+        [f'{m["home_team"]} vs {m["away_team"]}' for m in matches]
+    )
+    match = next(m for m in matches if f'{m["home_team"]} vs {m["away_team"]}' == selected_match)
+
+    home_stats_raw = get_team_stats(match["home_team"])
+    away_stats_raw = get_team_stats(match["away_team"])
+
+    if home_stats_raw:
+        home_avg_goals = np.mean([m["score"]["fullTime"]["home"] for m in home_stats_raw])
+        home_win_rate = np.mean([1 if m["score"]["fullTime"]["home"] > m["score"]["fullTime"]["away"] else 0 for m in home_stats_raw])
+    else:
+        st.warning(f"Липсва статистика за {match['home_team']}, използват се фиктивни стойности")
+        home_avg_goals, home_win_rate = 1.2, 0.5
+
+    if away_stats_raw:
+        away_avg_goals = np.mean([m["score"]["fullTime"]["away"] for m in away_stats_raw])
+        away_win_rate = np.mean([1 if m["score"]["fullTime"]["away"] > m["score"]["fullTime"]["home"] else 0 for m in away_stats_raw])
+    else:
+        st.warning(f"Липсва статистика за {match['away_team']}, използват се фиктивни стойности")
+        away_avg_goals, away_win_rate = 0.9, 0.3
+
+    prob_home, prob_draw, prob_away = calculate_poisson_probabilities(home_avg_goals, away_avg_goals)
+
+    # Събиране на коефициенти с проверки
+    try:
+        best_odds = {
+            "home": max(o["price"] for b in match["bookmakers"] for o in b["markets"][0]["outcomes"] if o["name"] == match["home_team"]),
+            "draw": max(o["price"] for b in match["bookmakers"] for o in b["markets"][0]["outcomes"] if o["name"] == "Draw"),
+            "away": max(o["price"] for b in match["bookmakers"] for o in b["markets"][0]["outcomes"] if o["name"] == match["away_team"]),
+        }
+    except Exception:
+        st.warning("Не бяха намерени коефициенти за всички пазари.")
+        best_odds = {"home": None, "draw": None, "away": None}
+
+    value_bets = calculate_value_bets({"home": prob_home, "draw": prob_draw, "away": prob_away}, best_odds)
+
+    st.write(f"### Анализ на мача: {selected_match}")
+    st.write(f"- Вероятност за победа на домакин: {prob_home:.2%}")
+    st.write(f"- Вероятност за равен: {prob_draw:.2%}")
+    st.write(f"- Вероятност за победа на гост: {prob_away:.2%}")
+    st.write(f"- Коефициенти: {best_odds}")
+    st.write(f"- Value bets: {value_bets}")
+
+if __name__ == "__main__":
+    main()
