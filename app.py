@@ -20,6 +20,25 @@ def get_real_predictions():
          "Обосновка": "Уругвай е в по-добра форма и има психологическо предимство след предишни победи."}
     ]
 
+# Функция за изчисляване на банка
+def calculate_bank(df, initial_bank):
+    bank = initial_bank
+    for _, row in df.iterrows():
+        if row["Резултат"].startswith("✅"):
+            bank += row["Сума"] * row["Коеф"] - row["Сума"]
+        elif row["Резултат"].startswith("❌"):
+            bank -= row["Сума"]
+    return bank
+
+# Функция за оцветяване на редове според резултата
+def highlight_result(row):
+    if row["Резултат"].startswith("✅"):
+        return ['background-color: #d4edda'] * len(row)
+    elif row["Резултат"].startswith("❌"):
+        return ['background-color: #f8d7da'] * len(row)
+    else:
+        return [''] * len(row)
+
 # Инициализация
 if 'initial_bank' not in st.session_state:
     st.session_state.initial_bank = 340
@@ -31,40 +50,33 @@ df = st.session_state.df
 
 st.title("⚽ Прогнози и обосновки")
 
-# Текуща банка
-bank = st.session_state.initial_bank
-for _, row in df.iterrows():
-    if row["Резултат"] == "✅ Печеливш":
-        bank += row["Сума"] * row["Коеф"] - row["Сума"]
-    elif row["Резултат"] == "❌ Губещ":
-        bank -= row["Сума"]
+# Изчисляване на текуща банка и запис в сесия
+st.session_state.bank = calculate_bank(df, st.session_state.initial_bank)
 
+# Показване на банка
 st.subheader("💰 Банка")
-st.metric("Текущ баланс", f"{bank:.2f} лв")
+st.metric("Текущ баланс", f"{st.session_state.bank:.2f} лв")
 
-# Показване на всички прогнози
+# Показване на таблицата с прогнози, оцветена според резултат
 st.subheader("📋 Всички прогнози")
-df_styled = df.style.apply(
-    lambda row: ['background-color: #d4edda' if row["Резултат"].startswith("✅") else
-                 'background-color: #f8d7da' if row["Резултат"].startswith("❌") else ''
-                 for _ in row], axis=1)
+df_styled = df.style.apply(highlight_result, axis=1)
 st.dataframe(df_styled, use_container_width=True)
 
-# Избор за детайлна обосновка
+# Избор на мач за детайлна обосновка
 st.subheader("🔎 Виж обосновка по мач")
 
 match_options = [f"{row['Дата']} | {row['Мач']}" for _, row in df.iterrows()]
 selected = st.selectbox("Избери мач", match_options)
 
-# Показване на обосновка
 selected_row = df.iloc[match_options.index(selected)]
-st.markdown(f"""
-### 🧠 Обосновка за **{selected_row['Мач']}**
-- 📅 Дата: {selected_row['Дата']}
-- 🎯 Прогноза: **{selected_row['Прогноза']}**
-- 💸 Коефициент: {selected_row['Коеф']}
-- 💰 Залог: {selected_row['Сума']} лв
-- 📈 Резултат: {selected_row['Резултат']}
-- 📊 Обосновка:
-> {selected_row['Обосновка']}
-""")
+
+with st.expander(f"🧠 Обосновка за {selected_row['Мач']}"):
+    st.markdown(f"""
+    - 📅 Дата: {selected_row['Дата']}
+    - 🎯 Прогноза: **{selected_row['Прогноза']}**
+    - 💸 Коефициент: {selected_row['Коеф']}
+    - 💰 Залог: {selected_row['Сума']} лв
+    - 📈 Резултат: {selected_row['Резултат']}
+    - 📊 Обосновка:
+    > {selected_row['Обосновка']}
+    """)
