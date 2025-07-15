@@ -4,7 +4,6 @@ from datetime import date, timedelta
 import matplotlib.pyplot as plt
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 
-# -- Примерни реални прогнози (включват днешни и вчерашни)
 def load_predictions():
     return [
         {"Дата": str(date.today() - timedelta(days=1)), "Мач": "Bodo/Glimt - Ruzomberok", "Прогноза": "1", "Коеф": 1.55, "Сума": 20, "Резултат": "2:0", "Статус": "Печели", "Обосновка": "Bodo е с много по-силен състав и домакинският фактор е решаващ."},
@@ -14,7 +13,6 @@ def load_predictions():
         {"Дата": str(date.today()), "Мач": "Uruguay W - Argentina W", "Прогноза": "1", "Коеф": 2.00, "Сума": 10, "Резултат": "Очаква се", "Статус": "", "Обосновка": "Uruguay е в по-добра форма и играе у дома."},
     ]
 
-# -- Инициализация на състоянията
 if 'bank' not in st.session_state:
     st.session_state.bank = 340
 if 'predictions' not in st.session_state:
@@ -22,24 +20,21 @@ if 'predictions' not in st.session_state:
 
 st.title("📊 Прогнози за спортни залози")
 
-# -- Таблица с AgGrid
-st.subheader("🎯 Таблица с прогнози")
 df = pd.DataFrame(st.session_state.predictions)
+
+# Безопасно преобразуване на дата и запълване на NaN
+df["Дата"] = pd.to_datetime(df["Дата"], errors='coerce').dt.strftime("%Y-%m-%d")
+df.fillna("", inplace=True)
 
 gb = GridOptionsBuilder.from_dataframe(df)
 gb.configure_selection("single")
 gb.configure_columns(["Дата", "Мач", "Прогноза", "Коеф", "Сума", "Резултат", "Статус"], editable=False)
-gb.configure_column("Статус", cellStyle="""
-    function(params) {
-        if (params.value === 'Печели') {
-            return { 'backgroundColor': '#d4f7dc' };
-        } else if (params.value === 'Губи') {
-            return { 'backgroundColor': '#fddddd' };
-        } else {
-            return { 'backgroundColor': 'white' };
-        }
-    }
-""")
+
+# Временно махаме cellStyle, ако искаш - после може да добавим пак
+# gb.configure_column("Статус", cellStyle=lambda params: {
+#     'backgroundColor': '#d4f7dc' if params.value == 'Печели' else '#fddddd' if params.value == 'Губи' else 'white'
+# })
+
 grid_options = gb.build()
 
 response = AgGrid(
@@ -51,15 +46,14 @@ response = AgGrid(
     fit_columns_on_grid_load=True
 )
 
-# -- Показване на обосновка при избор на ред
 selected = response['selected_rows']
 if selected:
     match = selected[0]
-    st.markdown("""---""")
+    st.markdown("---")
     st.subheader(f"📌 Обосновка за мача: {match['Мач']}")
     st.info(match['Обосновка'])
 
-# -- Графика на банката
+# Графика на банката
 st.subheader("📈 История на печалби")
 df['Печалба'] = df.apply(lambda row: (row['Коеф'] * row['Сума'] - row['Сума']) if row['Статус'] == 'Печели' else (-row['Сума'] if row['Статус'] == 'Губи' else 0), axis=1)
 df['Натрупана банка'] = st.session_state.bank + df['Печалба'].cumsum()
@@ -71,7 +65,6 @@ ax.set_ylabel("Лева")
 ax.set_xlabel("Дата")
 st.pyplot(fig)
 
-# -- Финална банка
 st.subheader("💰 Актуална банка")
 bank_total = st.session_state.bank + df['Печалба'].sum()
 st.metric("Текуща банка", f"{bank_total:.2f} лв")
