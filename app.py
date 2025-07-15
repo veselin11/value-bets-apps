@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
+import matplotlib.pyplot as plt
 
-# Прогнози от ChatGPT – реални мачове (днес и вчера)
+# Фиксирани реални прогнози от ChatGPT (можеш да добавяш още)
 def get_chatgpt_predictions():
     return [
         # Вчерашни (с резултати)
@@ -16,27 +17,26 @@ def get_chatgpt_predictions():
         {"Дата": str(date.today()), "Мач": "Uruguay W - Argentina W", "Прогноза": "1", "Коеф": 2.00, "Сума": 10, "Резултат": "Очаква се"},
     ]
 
-# Инициализация на сесията
-if 'bank' not in st.session_state:
-    st.session_state.bank = 340  # Начален капитал
+# Инициализация
+if 'initial_bank' not in st.session_state:
+    st.session_state.initial_bank = 340
 
 if 'bets' not in st.session_state:
     st.session_state.bets = []
 
-# Заглавие
-st.title("⚽ Дневни прогнози от ChatGPT")
+# Интерфейс
+st.title("📊 Архив и статистика на прогнози")
 
-# Зареждане на прогнозите
-if st.button("🔄 Зареди реалните прогнози"):
-    predictions = get_chatgpt_predictions()
-    st.session_state.bets = predictions  # Презаписваме, не добавяме
-    st.success("Прогнозите са заредени!")
+# Зареждане на реалните прогнози
+if st.button("🔄 Зареди новите прогнози"):
+    new_preds = get_chatgpt_predictions()
+    st.session_state.bets = new_preds  # Презаписваме
+    st.success("Прогнозите са презаредени!")
 
-# Визуализация
+# Показване на таблицата с оцветяване
 if st.session_state.bets:
     df = pd.DataFrame(st.session_state.bets)
 
-    # Оцветяване по резултат
     def highlight_result(row):
         if row['Резултат'] == "✅ Печеливш":
             return ['background-color: #e6ffe6'] * len(row)
@@ -44,21 +44,33 @@ if st.session_state.bets:
             return ['background-color: #ffe6e6'] * len(row)
         return [''] * len(row)
 
-    st.subheader("📋 Прогнози от вчера и днес")
+    st.subheader("📋 Архив на всички прогнози")
     st.dataframe(df.style.apply(highlight_result, axis=1), use_container_width=True)
 
-    # Актуализиране на банката спрямо завършили мачове
-    start_bank = 340
-    total_profit = 0
-    for bet in df.itertuples():
-        if bet.Резултат == "✅ Печеливш":
-            total_profit += bet.Сума * bet.Коеф - bet.Сума
-        elif bet.Резултат == "❌ Губещ":
-            total_profit -= bet.Сума
-    st.session_state.bank = start_bank + total_profit
-else:
-    st.info("Натисни бутона по-горе, за да заредиш прогнозите.")
+    # Изчисляване на дневни стойности на банката
+    bank = st.session_state.initial_bank
+    history = []
+    for i, row in df.iterrows():
+        result = row['Резултат']
+        amount = row['Сума']
+        coef = row['Коеф']
+        if result == "✅ Печеливш":
+            win = amount * coef
+            bank += win - amount
+        elif result == "❌ Губещ":
+            bank -= amount
+        history.append({"Дата": row['Дата'], "Банка": round(bank, 2)})
 
-# Показване на текущата банка
-st.subheader("💰 Актуална банка")
-st.metric("Остатък", f"{st.session_state.bank:.2f} лв")
+    # Показване на графика
+    st.subheader("📈 Графика на движението на банката")
+    chart_df = pd.DataFrame(history)
+    chart_df['Дата'] = pd.to_datetime(chart_df['Дата'])
+    chart_df = chart_df.sort_values("Дата")
+    st.line_chart(chart_df.set_index("Дата")["Банка"])
+
+    # Финална метрика
+    st.subheader("💰 Актуална банка")
+    st.metric("Баланс", f"{bank:.2f} лв")
+
+else:
+    st.info("Натисни бутона, за да заредиш прогнозите.")
