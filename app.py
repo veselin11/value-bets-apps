@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 
-# Данни – само реалните мачове, които наистина са играни или предстоят
+# Реални прогнози с обосновки
 def get_real_predictions():
     return [
         {"Дата": str(date.today() - timedelta(days=1)), "Мач": "Elfsborg - Molde", "Прогноза": "ГГ", "Коеф": 1.85, "Сума": 20, "Резултат": "✅ Печеливш",
@@ -11,7 +12,6 @@ def get_real_predictions():
          "Обосновка": "AIK е силен домакин и се намира във възход, докато Kalmar е в слаба форма и с кадрови проблеми."},
         {"Дата": str(date.today() - timedelta(days=1)), "Мач": "Avai - Coritiba", "Прогноза": "1", "Коеф": 2.00, "Сума": 20, "Резултат": "❌ Губещ",
          "Обосновка": "Avai запазва стабилност у дома и има добър баланс срещу Coritiba."},
-
         {"Дата": str(date.today()), "Мач": "Kairat - Olimpija", "Прогноза": "Под 2.5", "Коеф": 1.65, "Сума": 40, "Резултат": "Очаква се",
          "Обосновка": "И двата отбора играят дефанзивно в евротурнирите, очаква се предпазлив подход."},
         {"Дата": str(date.today()), "Мач": "Malmo - Saburtalo", "Прогноза": "Над 2.5", "Коеф": 1.60, "Сума": 20, "Резултат": "Очаква се",
@@ -29,43 +29,64 @@ if 'df' not in st.session_state:
 
 df = st.session_state.df
 
-st.title("📊 Реални прогнози и обосновка")
+st.title("⚽ Прогнози и анализ")
 
-# Изчисляване на текуща банка
+# Актуална банка
 bank = st.session_state.initial_bank
 for _, row in df.iterrows():
-    if row["Резултат"] == "✅ Печеливш":
+    if row["Резултат"].startswith("✅"):
         bank += row["Сума"] * row["Коеф"] - row["Сума"]
-    elif row["Резултат"] == "❌ Губещ":
+    elif row["Резултат"].startswith("❌"):
         bank -= row["Сума"]
 
-st.subheader("💰 Актуална банка")
-st.metric("Баланс", f"{bank:.2f} лв")
+st.subheader("💰 Банка")
+st.metric("Текущ баланс", f"{bank:.2f} лв")
 
-# Показване на прогнозите с интерактивен избор
+# Настройки за AgGrid
+gb = GridOptionsBuilder.from_dataframe(df[["Дата", "Мач", "Прогноза", "Коеф", "Сума", "Резултат"]])
+gb.configure_selection("single", use_checkbox=True)
+grid_options = gb.build()
+
+# Стилове според резултата
+cell_style_jscode = """
+function(params) {
+    if (params.value.includes("Печеливш")) {
+        return { 'backgroundColor': '#d4edda' };
+    } else if (params.value.includes("Губещ")) {
+        return { 'backgroundColor': '#f8d7da' };
+    }
+    return {};
+}
+"""
+
+# Добавяме стила към колоната "Резултат"
+gb.configure_column("Резултат", cellStyle=cell_style_jscode)
+grid_options = gb.build()
+
 st.subheader("📋 Прогнози")
-selected_index = st.data_editor(
-    df.drop("Обосновка", axis=1),
-    use_container_width=True,
-    column_config={"Дата": st.column_config.TextColumn(label="Дата")},
-    disabled=True,
-    hide_index=True,
-    num_rows="dynamic",
-    key="match_selector"
+grid_response = AgGrid(
+    df,
+    gridOptions=grid_options,
+    update_mode=GridUpdateMode.SELECTION_CHANGED,
+    height=300,
+    allow_unsafe_jscode=True,
+    fit_columns_on_grid_load=True
 )
 
-# Показване на обосновка за избран ред (ако има селекция)
-if selected_index and isinstance(selected_index, list):
-    index = selected_index[0]
-    selected_row = df.iloc[index]
+selected = grid_response['selected_rows']
+
+# Показване на обосновка при избор
+if selected:
+    row = selected[0]
+    st.subheader(f"🧠 Обосновка за {row['Мач']}")
     st.markdown(f"""
-    ### 🧠 Обосновка за **{selected_row['Мач']}**
-    - 📅 Дата: {selected_row['Дата']}
-    - 🎯 Прогноза: **{selected_row['Прогноза']}**
-    - 💸 Коефициент: {selected_row['Коеф']}
-    - 💰 Залог: {selected_row['Сума']} лв
+    - 📅 Дата: {row['Дата']}
+    - 🎯 Прогноза: **{row['Прогноза']}**
+    - 💸 Коефициент: {row['Коеф']}
+    - 💰 Залог: {row['Сума']} лв
+    - 📈 Резултат: {row['Резултат']}
     - 📊 Обосновка:
-        > {selected_row['Обосновка']}
+    > {row['Обосновка']}
     """)
 else:
-    st.info("Избери мач от таблицата, за да видиш обосновката.")
+    st.info("Избери мач от таблицата, за да видиш подробна обосновка.")
