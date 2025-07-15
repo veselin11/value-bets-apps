@@ -1,86 +1,76 @@
 import streamlit as st
 import pandas as pd
-from datetime import date, timedelta
-from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
+from st_aggrid import AgGrid, GridOptionsBuilder, JsCode
 
-# Инициализация
-if "bank" not in st.session_state:
-    st.session_state.bank = 340
-
-if "bets" not in st.session_state:
-    # Добавяме примерни прогнози
-    st.session_state.bets = [
-        {
-            "Дата": str(date.today() - timedelta(days=1)),
-            "Мач": "Malmo - Saburtalo",
-            "Прогноза": "Над 2.5",
-            "Коеф": 1.60,
-            "Сума": 20,
-            "Резултат": "Печели",
-            "Обосновка": "Malmo бележи много у дома. Saburtalo допуска поне 2 гола в 5 от последните 6 мача."
-        },
-        {
-            "Дата": str(date.today() - timedelta(days=1)),
-            "Мач": "Avaí - Amazonas",
-            "Прогноза": "1",
-            "Коеф": 2.30,
-            "Сума": 20,
-            "Резултат": "Губи",
-            "Обосновка": "Avaí бяха в добра форма у дома, докато Amazonas са слаби гости."
-        },
-        {
-            "Дата": str(date.today()),
-            "Мач": "Kairat - Olimpija",
-            "Прогноза": "Под 2.5",
-            "Коеф": 1.65,
-            "Сума": 40,
-            "Резултат": "Очаква се",
-            "Обосновка": "И двата отбора играят предпазливо в международни мачове. Малко голове в последните им срещи."
-        },
-    ]
-
-# Заглавие
-st.title("⚽ Прогнози и история на залозите")
-
-# Данни
-df = pd.DataFrame(st.session_state.bets)
-
-# Стил за резултатите
-cell_style = JsCode("""
-function(params) {
-    if (params.value === 'Печели') {
-        return { 'backgroundColor': '#e0ffe0' }
-    } else if (params.value === 'Губи') {
-        return { 'backgroundColor': '#ffe0e0' }
+# Примерни прогнози с обосновки, резултати и др.
+data = [
+    {
+        "Date": "2025-07-15",
+        "Match": "Kairat - Olimpija",
+        "Prediction": "Под 2.5",
+        "Odds": 1.65,
+        "Stake": 40,
+        "Result": "Win",
+        "Reason": "Отборите играят стабилна защита, малко голове очакваме."
+    },
+    {
+        "Date": "2025-07-15",
+        "Match": "Malmo - Saburtalo",
+        "Prediction": "Над 2.5",
+        "Odds": 1.60,
+        "Stake": 20,
+        "Result": "Loss",
+        "Reason": "Malmo има добър нападателен потенциал, но мачът излезе по-консервативен."
+    },
+    {
+        "Date": "2025-07-15",
+        "Match": "Uruguay W - Argentina W",
+        "Prediction": "1",
+        "Odds": 2.00,
+        "Stake": 10,
+        "Result": "Win",
+        "Reason": "Уругвайки са в добра форма и домакинският фактор е силен."
     }
-    return {};
+]
+
+# Създаваме DataFrame и чистим обосновките
+df = pd.DataFrame(data)
+df["Reason"] = df["Reason"].fillna("").astype(str)
+
+# JavaScript за оцветяване според резултата
+cell_style_jscode = JsCode("""
+function(params) {
+    if (params.value === 'Win') {
+        return {'backgroundColor': '#d4f7d4'};  // светло зелено
+    } else if (params.value === 'Loss') {
+        return {'backgroundColor': '#f7d4d4'};  // светло червено
+    } else {
+        return {};
+    }
 }
 """)
 
-# Grid опции
+st.title("Прогнози със залог и обосновка")
+
+# Настройка на таблицата с AgGrid
 gb = GridOptionsBuilder.from_dataframe(df)
-gb.configure_column("Резултат", cellStyle=cell_style)
+gb.configure_column("Result", cellStyle=cell_style_jscode)
 gb.configure_selection(selection_mode="single", use_checkbox=False)
 grid_options = gb.build()
 
-# Таблица
-st.subheader("📋 Таблица с прогнози")
-grid_response = AgGrid(
-    df,
-    gridOptions=grid_options,
-    update_mode=GridUpdateMode.SELECTION_CHANGED,
-    fit_columns_on_grid_load=True,
-    enable_enterprise_modules=False
-)
+grid_response = AgGrid(df, gridOptions=grid_options, allow_unsafe_jscode=True, theme='material')
 
-# Обосновка при избор
-selected = grid_response["selected_rows"]
-if selected:
-    st.subheader("📌 Обосновка за избран мач")
-    st.markdown(f"**{selected[0]['Мач']}** — _{selected[0]['Дата']}_")
-    st.write(selected[0]["Обосновка"])
+selected_rows = grid_response['selected_rows']
 
-# Банка
-st.subheader("💰 Актуална банка")
-bank = st.session_state.bank
-st.metric("Остатък", f"{bank:.2f} лв")
+if selected_rows:
+    selected = selected_rows[0]  # Първият (и единствен) избран ред
+    st.subheader(f"Обосновка за мач: {selected['Match']}")
+    st.write(selected['Reason'])
+else:
+    st.info("Изберете мач от таблицата, за да видите обосновката.")
+
+# Показваме банка (пример)
+if 'bank' not in st.session_state:
+    st.session_state.bank = 340
+st.subheader("Актуална банка")
+st.metric("Остатък", f"{st.session_state.bank:.2f} лв")
