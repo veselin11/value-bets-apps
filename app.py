@@ -1,44 +1,38 @@
-import streamlit as st
-from datetime import datetime
+import streamlit as st import pandas as pd from datetime import date
 
-# --- ДАННИ ЗА ПРОГНОЗИ (пример) ---
-matches = [
-    {
-        "match": "Sirius vs Mjällby",
-        "date": "2025-07-14",
-        "predictions": {
-            "1X2": {"Pick": "1", "Odds": 1.90, "Analysis": "Mjällby са по-силният отбор и фаворит."},
-            "Goals": {"Pick": "Over 2.5", "Odds": 3.60, "Analysis": "Прогнозираме открит мач с голове."},
-            "BTTS": {"Pick": "No", "Odds": 1.50, "Analysis": "Sirius трудно вкарват на чужд терен."}
-        }
-    },
-    # Можем да добавим още мачове...
-]
+Инициализация на сесия
 
-# --- Streamlit интерфейс ---
-st.set_page_config(page_title="ProBet - Твоите спортни прогнози", layout="wide")
+if 'bank' not in st.session_state: st.session_state.bank = 340  # текуща банка след последния ден
 
-st.title("ProBet – Уникални спортни прогнози и анализи")
+if 'bets' not in st.session_state: st.session_state.bets = []
 
-st.markdown("## Прогнози за днес – " + datetime.today().strftime('%Y-%m-%d'))
+st.title("🎯 Спортни прогнози – Тракер") st.write("Следи прогнозите, печалбите и развитието на банката")
 
-for match_data in matches:
-    if match_data["date"] == datetime.today().strftime('%Y-%m-%d'):
-        st.subheader(match_data["match"])
-        
-        with st.expander("Прогнози и анализ"):
-            preds = match_data["predictions"]
-            for bet_type, info in preds.items():
-                st.markdown(f"**{bet_type}**: `{info['Pick']}` | Коефициент: {info['Odds']}")
-                st.write(info["Analysis"])
-        
-        # Опция за залог
-        st.markdown("### Постави залог")
-        bet_choice = st.selectbox(f"Избери залог за {match_data['match']}", options=list(preds.keys()))
-        bet_amount = st.number_input(f"Сума за залог на {bet_choice}", min_value=10, max_value=300, step=10, value=20)
-        
-        if st.button(f"Пусни залог: {match_data['match']} - {bet_choice} за {bet_amount} лв"):
-            st.success(f"Залогът ти за {bet_choice} на {match_data['match']} е приет! Успех!")
+Форма за нова прогноза
 
-st.markdown("---")
-st.write("© 2025 ProBet. Всички права запазени.")
+st.subheader("➕ Добави прогноза") with st.form("add_bet"): match = st.text_input("Мач") prediction = st.selectbox("Прогноза", ["1", "X", "2", "Под 2.5", "Над 2.5", "ГГ", "Няма ГГ"]) odds = st.number_input("Коефициент", min_value=1.01, value=1.50, step=0.01) stake = st.number_input("Сума на залог (лв)", min_value=10, step=10) result = st.selectbox("Резултат", ["Очаква се", "✅ Печеливш", "❌ Губещ"]) submit = st.form_submit_button("Добави")
+
+if submit:
+    st.session_state.bets.append({
+        "Дата": str(date.today()),
+        "Мач": match,
+        "Прогноза": prediction,
+        "Коеф": odds,
+        "Сума": stake,
+        "Резултат": result
+    })
+
+    if result == "✅ Печеливш":
+        st.session_state.bank += stake * odds - stake
+    elif result == "❌ Губещ":
+        st.session_state.bank -= stake
+
+Показване на всички прогнози
+
+st.subheader("📋 История на прогнозите") if st.session_state.bets: df = pd.DataFrame(st.session_state.bets) st.dataframe(df, use_container_width=True) else: st.info("Все още няма добавени прогнози.")
+
+Текуща банка
+
+st.subheader("💰 Актуална банка") st.metric("Остатък", f"{st.session_state.bank:.2f
+
+                                                         
