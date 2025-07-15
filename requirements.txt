@@ -6,3 +6,6 @@ joblib
 requests
 beautifulsoup4
 pytz
+streamlit
+pandas
+matplotlib
