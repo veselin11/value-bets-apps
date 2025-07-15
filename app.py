@@ -1,6 +1,6 @@
 import streamlit as st 
-import pandas as pd from datetime 
-import date
+import pandas as pd 
+from datetime import date
 
 Инициализация на сесия
 
