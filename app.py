@@ -29,9 +29,17 @@ df = pd.DataFrame(st.session_state.predictions)
 gb = GridOptionsBuilder.from_dataframe(df)
 gb.configure_selection("single")
 gb.configure_columns(["Дата", "Мач", "Прогноза", "Коеф", "Сума", "Резултат", "Статус"], editable=False)
-gb.configure_column("Статус", cellStyle=lambda params: {
-    'backgroundColor': '#d4f7dc' if params.value == 'Печели' else '#fddddd' if params.value == 'Губи' else 'white'
-})
+gb.configure_column("Статус", cellStyle="""
+    function(params) {
+        if (params.value === 'Печели') {
+            return { 'backgroundColor': '#d4f7dc' };
+        } else if (params.value === 'Губи') {
+            return { 'backgroundColor': '#fddddd' };
+        } else {
+            return { 'backgroundColor': 'white' };
+        }
+    }
+""")
 grid_options = gb.build()
 
 response = AgGrid(
