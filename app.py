@@ -20,7 +20,7 @@ def get_real_predictions():
          "Обосновка": "Уругвай е в по-добра форма и има психологическо предимство след предишни победи."}
     ]
 
-# Функция за изчисляване на банка
+# Банка
 def calculate_bank(df, initial_bank):
     bank = initial_bank
     for _, row in df.iterrows():
@@ -30,7 +30,7 @@ def calculate_bank(df, initial_bank):
             bank -= row["Сума"]
     return bank
 
-# Функция за оцветяване на редове според резултата
+# Оцветяване
 def highlight_result(row):
     if row["Резултат"].startswith("✅"):
         return ['background-color: #d4edda'] * len(row)
@@ -46,23 +46,23 @@ if 'initial_bank' not in st.session_state:
 if 'df' not in st.session_state:
     st.session_state.df = pd.DataFrame(get_real_predictions())
 
-df = st.session_state.df
+# Филтрираме само нашите мачове (всички с резултат различен от „-“)
+df = st.session_state.df.copy()
+df_filtered = df[df["Резултат"].isin(["✅ Печеливш", "❌ Губещ", "Очаква се"])].drop(columns=["Обосновка"])
 
+# Заглавие и банка
 st.title("⚽ Прогнози и обосновки")
 
-# Изчисляване на текуща банка и запис в сесия
 st.session_state.bank = calculate_bank(df, st.session_state.initial_bank)
-
-# Показване на банка
 st.subheader("💰 Банка")
 st.metric("Текущ баланс", f"{st.session_state.bank:.2f} лв")
 
-# Показване на таблицата с прогнози, оцветена според резултат
-st.subheader("📋 Всички прогнози")
-df_styled = df.style.apply(highlight_result, axis=1)
+# Таблица
+st.subheader("📋 Нашите прогнози")
+df_styled = df_filtered.style.apply(highlight_result, axis=1)
 st.dataframe(df_styled, use_container_width=True)
 
-# Избор на мач за детайлна обосновка
+# Обосновка
 st.subheader("🔎 Виж обосновка по мач")
 
 match_options = [f"{row['Дата']} | {row['Мач']}" for _, row in df.iterrows()]
