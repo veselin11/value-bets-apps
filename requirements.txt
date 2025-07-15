@@ -9,3 +9,7 @@ pytz
 streamlit
 pandas
 matplotlib
+streamlit
+streamlit-aggrid
+pandas
+matplotlib
