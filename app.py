@@ -1,4 +1,6 @@
-import streamlit as st import pandas as pd from datetime import date
+import streamlit as st 
+import pandas as pd from datetime 
+import date
 
 Инициализация на сесия
 
@@ -34,5 +36,3 @@ st.subheader("📋 История на прогнозите") if st.session_stat
 Текуща банка
 
 st.subheader("💰 Актуална банка") st.metric("Остатък", f"{st.session_state.bank:.2f
-
-                                                         
