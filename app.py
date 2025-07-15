@@ -50,22 +50,24 @@ if st.session_state.bets:
 
     # Избор на мач за обосновка
     st.subheader("🧠 Обосновка за избран мач")
-    match_list = [f"{row['Дата']} — {row['Мач']}" for row in df.itertuples()]
+    match_list = [f"{row.Дата} — {row.Мач}" for row in df.itertuples()]
     selected = st.selectbox("Избери мач", match_list)
-    selected_row = df.iloc[match_list.index(selected)]
+    selected_index = match_list.index(selected)
+    selected_row = df.iloc[selected_index]
 
     st.markdown(f"""
     ### 📌 {selected_row['Мач']}
     - 📅 Дата: {selected_row['Дата']}
     - 🎯 Прогноза: **{selected_row['Прогноза']}**
     - 💸 Коефициент: {selected_row['Коеф']}
-    - 🎯 Обосновка:  
+    - 💰 Залог: {selected_row['Сума']} лв
+    - 📊 Обосновка:
         > {selected_row['Обосновка']}
     """)
 
     # Актуална банка
     bank = st.session_state.initial_bank
-    for i, row in df.iterrows():
+    for _, row in df.iterrows():
         if row["Резултат"] == "✅ Печеливш":
             bank += row["Сума"] * row["Коеф"] - row["Сума"]
         elif row["Резултат"] == "❌ Губещ":
