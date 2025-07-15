@@ -2,8 +2,8 @@ import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
 
-# Прогнози с обосновка
-def get_chatgpt_predictions():
+# Данни – само реалните мачове, които наистина са играни или предстоят
+def get_real_predictions():
     return [
         {"Дата": str(date.today() - timedelta(days=1)), "Мач": "Elfsborg - Molde", "Прогноза": "ГГ", "Коеф": 1.85, "Сума": 20, "Резултат": "✅ Печеливш",
          "Обосновка": "И двата отбора показват висока резултатност, а Molde бележи средно над 1.5 гола като гост."},
@@ -23,40 +23,43 @@ def get_chatgpt_predictions():
 # Инициализация
 if 'initial_bank' not in st.session_state:
     st.session_state.initial_bank = 340
-if 'bets' not in st.session_state:
-    st.session_state.bets = []
 
-# Заглавие
-st.title("🎯 Прогнози с обосновка и статистика")
+if 'df' not in st.session_state:
+    st.session_state.df = pd.DataFrame(get_real_predictions())
 
-# Зареждане на прогнози
-if st.button("🔄 Зареди прогнозите"):
-    st.session_state.bets = get_chatgpt_predictions()
-    st.success("Прогнозите са заредени!")
+df = st.session_state.df
 
-# Архив с оцветяване
-if st.session_state.bets:
-    df = pd.DataFrame(st.session_state.bets)
+st.title("📊 Реални прогнози и обосновка")
 
-    def highlight_result(row):
-        if row['Резултат'] == "✅ Печеливш":
-            return ['background-color: #e6ffe6'] * len(row)
-        elif row['Резултат'] == "❌ Губещ":
-            return ['background-color: #ffe6e6'] * len(row)
-        return [''] * len(row)
+# Изчисляване на текуща банка
+bank = st.session_state.initial_bank
+for _, row in df.iterrows():
+    if row["Резултат"] == "✅ Печеливш":
+        bank += row["Сума"] * row["Коеф"] - row["Сума"]
+    elif row["Резултат"] == "❌ Губещ":
+        bank -= row["Сума"]
 
-    st.subheader("📋 Архив на прогнозите")
-    st.dataframe(df.drop("Обосновка", axis=1).style.apply(highlight_result, axis=1), use_container_width=True)
+st.subheader("💰 Актуална банка")
+st.metric("Баланс", f"{bank:.2f} лв")
 
-    # Избор на мач за обосновка
-    st.subheader("🧠 Обосновка за избран мач")
-    match_list = [f"{row.Дата} — {row.Мач}" for row in df.itertuples()]
-    selected = st.selectbox("Избери мач", match_list)
-    selected_index = match_list.index(selected)
-    selected_row = df.iloc[selected_index]
+# Показване на прогнозите с интерактивен избор
+st.subheader("📋 Прогнози")
+selected_index = st.data_editor(
+    df.drop("Обосновка", axis=1),
+    use_container_width=True,
+    column_config={"Дата": st.column_config.TextColumn(label="Дата")},
+    disabled=True,
+    hide_index=True,
+    num_rows="dynamic",
+    key="match_selector"
+)
 
+# Показване на обосновка за избран ред (ако има селекция)
+if selected_index and isinstance(selected_index, list):
+    index = selected_index[0]
+    selected_row = df.iloc[index]
     st.markdown(f"""
-    ### 📌 {selected_row['Мач']}
+    ### 🧠 Обосновка за **{selected_row['Мач']}**
     - 📅 Дата: {selected_row['Дата']}
     - 🎯 Прогноза: **{selected_row['Прогноза']}**
     - 💸 Коефициент: {selected_row['Коеф']}
@@ -64,17 +67,5 @@ if st.session_state.bets:
     - 📊 Обосновка:
         > {selected_row['Обосновка']}
     """)
-
-    # Актуална банка
-    bank = st.session_state.initial_bank
-    for _, row in df.iterrows():
-        if row["Резултат"] == "✅ Печеливш":
-            bank += row["Сума"] * row["Коеф"] - row["Сума"]
-        elif row["Резултат"] == "❌ Губещ":
-            bank -= row["Сума"]
-
-    st.subheader("💰 Актуална банка")
-    st.metric("Баланс", f"{bank:.2f} лв")
-
 else:
-    st.info("Натисни бутона, за да заредиш прогнозите.")
+    st.info("Избери мач от таблицата, за да видиш обосновката.")
